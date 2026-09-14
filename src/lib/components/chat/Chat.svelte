@@ -36,6 +36,7 @@
 		artifactContents,
 		tools,
 		skills,
+		terminalSkills,
 		toolServers,
 		terminalServers,
 		functions,
@@ -981,6 +982,13 @@
 		selectedTerminalId.set(null);
 	}
 
+	let lastTerminalSkillSelector: string | null = null;
+	$: if ($selectedTerminalId !== lastTerminalSkillSelector) {
+		selectedSkillIds = selectedSkillIds.filter((id) => !id.startsWith('terminal:'));
+		terminalSkills.set([]);
+		lastTerminalSkillSelector = $selectedTerminalId;
+	}
+
 	let settingDefaults = false;
 	const setDefaults = async () => {
 		if (settingDefaults) return;
@@ -1237,6 +1245,9 @@
 					chatCompletionEventHandler(data, message, event.chat_id);
 				} else if (type === 'chat:tasks:cancel') {
 					dismissContextCompactionToast();
+					if (data?.output) {
+						message.output = data.output;
+					}
 					if (event.message_id === history.currentId) {
 						taskIds = null;
 						// Set all response messages to done
@@ -2160,13 +2171,13 @@
 				.get('tools')
 				?.split(',')
 				.map((id) => id.trim())
-				.filter((id) => id);
+				.filter((id) => id && ($tools ?? []).find((t) => t.id === id));
 		} else if ($page.url.searchParams.get('tool-ids')) {
 			selectedToolIds = $page.url.searchParams
 				.get('tool-ids')
 				?.split(',')
 				.map((id) => id.trim())
-				.filter((id) => id);
+				.filter((id) => id && ($tools ?? []).find((t) => t.id === id));
 		}
 
 		// Restore tool selection after OAuth redirect
@@ -2207,23 +2218,20 @@
 					}
 				}
 
-				if (query || eventFiles?.length) {
-					if (query) {
-						messageInput?.setText(query);
-					}
+				if (query) {
+					messageInput?.setText(query, () => submitHandler(prompt));
+				} else if (eventFiles?.length) {
 					await tick();
-					submitHandler(query || '');
+					submitHandler('');
 				}
 			}
 		} else if ($page.url.searchParams.get('q')) {
 			const q = $page.url.searchParams.get('q') ?? '';
-			messageInput?.setText(q);
 
-			if (q) {
-				if (($page.url.searchParams.get('submit') ?? 'true') === 'true') {
-					await tick();
-					submitHandler(q);
-				}
+			if (($page.url.searchParams.get('submit') ?? 'true') === 'true') {
+				messageInput?.setText(q, () => submitHandler(prompt));
+			} else {
+				messageInput?.setText(q);
 			}
 		}
 
@@ -2756,6 +2764,13 @@
 		if (output) {
 			message.output = output;
 			message.content = getOutputText(output);
+			if (
+				data.type === 'response.output_text.delta' &&
+				navigator.vibrate &&
+				$settings?.hapticFeedback
+			) {
+				navigator.vibrate(5);
+			}
 			dispatchCallOverlayAudio(message);
 		}
 
@@ -3562,11 +3577,7 @@
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
-				terminal_id:
-					terminalEnabled &&
-					($terminalServers ?? []).some((t) => t.id && t.id === $selectedTerminalId)
-						? $selectedTerminalId
-						: undefined,
+				terminal_id: terminalEnabled && $selectedTerminalId ? $selectedTerminalId : undefined,
 				tool_servers: [
 					...($toolServers ?? []).filter(
 						(server, idx) => toolServerIds.includes(idx) || toolServerIds.includes(server?.id)

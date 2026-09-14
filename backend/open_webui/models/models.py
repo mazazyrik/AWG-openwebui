@@ -17,10 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
-# Track invalid profile_image_url values we've already warned about so we
-# don't flood the logs on every DB read (the validator fires per-row).
-_warned_profile_urls: set[str] = set()
-
 
 def normalize_model_tags(tags: Any) -> list[dict[str, str]]:
     if not isinstance(tags, list):
@@ -80,6 +76,7 @@ class ModelMeta(BaseModel):
 
     profile_image_url: str | None = None
     description: str | None = Field(default=None, description='User-facing description of the model.')
+    i18n: dict[str, Any] | None = None
     capabilities: dict | None = None
     knowledge: list[Any] | None = None
 
@@ -93,12 +90,6 @@ class ModelMeta(BaseModel):
         try:
             return validate_profile_image_url(v)
         except ValueError:
-            if v not in _warned_profile_urls:
-                _warned_profile_urls.add(v)
-                log.warning(
-                    'Clearing invalid profile_image_url stored in DB (likely a legacy SVG data-URI): %.80s…',
-                    v,
-                )
             return None
 
     @field_validator('knowledge', mode='before')
@@ -175,7 +166,7 @@ class ModelAccessListResponse(BaseModel):
 class ModelForm(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
-    id: str
+    id: str = Field(pattern=r'^\S+$')
     base_model_id: str | None = None
     name: str
     meta: ModelMeta
@@ -448,11 +439,13 @@ class ModelsTable:
 
             return ModelListResponse(items=models, total=total)
 
-    async def get_model_meta_by_id(self, id: str, db: AsyncSession | None = None) -> tuple[dict, int | None]:
-        """Return (meta, updated_at) for a model, skipping access grant resolution."""
+    async def get_model_meta_by_id(
+        self, id: str, db: AsyncSession | None = None
+    ) -> tuple[dict, str, int | None] | None:
+        """Return (meta, user_id, updated_at) for a model, skipping access grant resolution."""
         try:
             async with get_async_db_context(db) as db:
-                result = await db.execute(select(Model.meta, Model.updated_at).filter_by(id=id))
+                result = await db.execute(select(Model.meta, Model.user_id, Model.updated_at).filter_by(id=id))
                 return result.first()
         except Exception:
             return None
