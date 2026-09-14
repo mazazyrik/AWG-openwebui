@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Brand from '$lib/components/common/Brand.svelte';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
@@ -58,6 +59,7 @@
 
 {#key mounted}
 	<div class="m-auto w-full max-w-[58rem] px-8 lg:px-20">
+		<div class="mb-5"><Brand className="h-10" showName /></div>
 		<div class="flex justify-start">
 			<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 200 }}>
 				{#each models as model, modelIdx}

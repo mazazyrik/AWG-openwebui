@@ -187,7 +187,7 @@
 						<img
 							src="https://www.google.com/s2/favicons?sz=32&domain={citation.source.name}"
 							alt="favicon"
-							class="size-4 rounded-full shrink-0 border border-white dark:border-gray-850 bg-white dark:bg-gray-900"
+							class="size-4 rounded-full shrink-0 border border-white dark:border-gray-850 bg-surface"
 							on:error={(e) => {
 								// LICENSE covers this Open WebUI fallback logo.
 								// Do not alter, remove, obscure, or replace it except as LICENSE permits:

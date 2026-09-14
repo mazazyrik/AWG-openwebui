@@ -85,7 +85,7 @@
 <Modal
 	bind:show
 	size="lg"
-	className="bg-white dark:bg-gray-900 rounded-3xl overflow-hidden"
+	className="bg-surface rounded-3xl overflow-hidden"
 	containerClassName="p-3"
 >
 	<div class="flex max-h-[58vh] flex-col">

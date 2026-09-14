@@ -36,8 +36,8 @@
 				Do not alter, remove, obscure, or replace it except as LICENSE permits:
 				https://docs.openwebui.com/license. -->
 				<img
-					src="{WEBUI_BASE_URL}/static/splash.png"
-					class="size-11 dark:invert p-0.5"
+					src="{WEBUI_BASE_URL}/static/favicon.png"
+					class="size-11 rounded-xl p-0.5"
 					alt="logo"
 					draggable="false"
 				/>

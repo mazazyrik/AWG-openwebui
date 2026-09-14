@@ -968,7 +968,7 @@
 							https://docs.openwebui.com/license. -->
 								<img
 									src="{WEBUI_BASE_URL}/static/favicon.png"
-									class="sidebar-new-chat-icon size-5 rounded-full group-hover:hidden"
+									class="sidebar-new-chat-icon size-7 rounded-lg group-hover:hidden"
 									alt=""
 								/>
 
@@ -1124,9 +1124,9 @@
 			inert={!$showSidebar}
 			class="h-screen max-h-[100dvh] min-h-screen select-none {$mobile
 				? visible
-					? 'bg-gray-50 dark:bg-gray-950 z-50'
+					? 'bg-sidebar z-50'
 					: 'bg-transparent z-0 pointer-events-none'
-				: `bg-gray-50 dark:bg-gray-950 z-50 ${$showSidebar ? '' : 'pointer-events-none'}`} {$isApp
+				: `bg-sidebar z-50 ${$showSidebar ? '' : 'pointer-events-none'}`} {$isApp
 				? `ml-[4.5rem] md:ml-0 `
 				: $mobile
 					? ''
@@ -1155,7 +1155,7 @@
 						<img
 							crossorigin="anonymous"
 							src="{WEBUI_BASE_URL}/static/favicon.png"
-							class="sidebar-new-chat-icon size-5 rounded-full"
+							class="sidebar-new-chat-icon size-7 rounded-lg"
 							alt=""
 						/>
 					</a>
@@ -1166,7 +1166,7 @@
 					https://docs.openwebui.com/license. -->
 						<div
 							id="sidebar-webui-name"
-							class=" self-center font-normal text-gray-700 dark:text-gray-200"
+							class=" self-center font-medium tracking-tight text-gray-700 dark:text-gray-200"
 						>
 							{$WEBUI_NAME}
 						</div>
