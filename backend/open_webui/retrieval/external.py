@@ -297,6 +297,11 @@ async def retrieve_external_knowledge(
     user=None,
 ) -> dict:
     external = (knowledge.meta or {}).get('external', {})
+    if external.get('provider') == 'confluence' or external.get('connection_id') == 'confluence':
+        from open_webui.integrations.confluence.retrieval import retrieve_confluence_knowledge
+
+        return await retrieve_confluence_knowledge(knowledge, queries, count, user=user)
+
     connection_id = external.get('connection_id')
     if not connection_id:
         raise RuntimeError('External knowledge connection is not configured')
@@ -325,6 +330,10 @@ async def retrieve_external_knowledge_for_connection(
     provider = (connection.get('provider') or '').lower()
 
     for query in queries:
+        if provider == 'confluence':
+            from open_webui.integrations.confluence.retrieval import retrieve_confluence_knowledge
+
+            return await retrieve_confluence_knowledge(knowledge, queries, count, user=user)
         if provider == 'qdrant':
             chunks.extend(
                 await _retrieve_qdrant(

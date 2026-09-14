@@ -3191,9 +3191,6 @@ async def query_knowledge_files(
         user_role = __user__.get('role', 'user')
         user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id)]
 
-        embedding_function = getattr(__request__.app.state, 'EMBEDDING_FUNCTION', None)
-        if not embedding_function:
-            return JSONCodec.dumps({'error': 'Embedding function not configured'})
         user_model = UserModel(**__user__)
 
         collection_names = []
@@ -3292,18 +3289,24 @@ async def query_knowledge_files(
                     collection_names.append(knowledge_base.id)
 
         chunks = []
+        requested_count = max(1, count)
+        seen_chunks = set()
+        confluence_page_counts = {}
 
         # Add note results first
         chunks.extend(note_results)
 
         # Query vector collections if any
         if collection_names:
+            embedding_function = getattr(__request__.app.state, 'EMBEDDING_FUNCTION', None)
+            if not embedding_function:
+                return JSONCodec.dumps({'error': 'Embedding function not configured'})
             query_results = await query_collection(
                 __request__,
                 collection_names=collection_names,
                 queries=[query],
                 embedding_function=lambda queries, prefix: embedding_function(queries, prefix=prefix, user=user_model),
-                k=count,
+                k=requested_count,
             )
 
             if query_results and 'documents' in query_results:
@@ -3312,21 +3315,24 @@ async def query_knowledge_files(
                 distances = query_results.get('distances', [[]])[0]
 
                 for idx, doc in enumerate(documents):
+                    metadata = metadatas[idx] if idx < len(metadatas) else {}
                     chunk_info = {
                         'content': doc,
-                        'source': metadatas[idx].get('source', metadatas[idx].get('name', 'Unknown')),
-                        'file_id': metadatas[idx].get('file_id', ''),
+                        'source': metadata.get('source', metadata.get('name', 'Unknown')),
+                        'file_id': metadata.get('file_id', ''),
                     }
                     if idx < len(distances):
                         chunk_info['distance'] = distances[idx]
                     chunks.append(chunk_info)
 
         for knowledge in external_knowledges:
+            external = (knowledge.meta or {}).get('external', {})
+            external_count = min(requested_count, 8) if external.get('provider') == 'confluence' else requested_count
             query_results = await retrieve_external_knowledge(
                 __request__,
                 knowledge,
                 queries=[query],
-                count=count,
+                count=external_count,
                 user=user_model,
             )
             documents = query_results.get('documents', [[]])[0]
@@ -3335,6 +3341,22 @@ async def query_knowledge_files(
 
             for idx, doc in enumerate(documents):
                 metadata = metadatas[idx] if idx < len(metadatas) else {}
+                is_confluence = metadata.get('provider') == 'confluence'
+                page_id = metadata.get('page_id') or metadata.get('file_id')
+                dedupe_key = (
+                    metadata.get('provider'),
+                    page_id,
+                    metadata.get('version'),
+                    metadata.get('hash'),
+                    doc[:120],
+                )
+                if dedupe_key in seen_chunks:
+                    continue
+                if is_confluence:
+                    if confluence_page_counts.get(page_id, 0) >= 2:
+                        continue
+                    confluence_page_counts[page_id] = confluence_page_counts.get(page_id, 0) + 1
+                seen_chunks.add(dedupe_key)
                 chunk_info = {
                     'content': doc,
                     'source': metadata.get('source', metadata.get('name', knowledge.name)),
@@ -3342,12 +3364,15 @@ async def query_knowledge_files(
                     'type': 'external',
                     'knowledge_id': knowledge.id,
                 }
+                for field in ('title', 'url', 'page_id', 'version', 'space', 'hash'):
+                    if metadata.get(field) is not None:
+                        chunk_info[field] = metadata.get(field)
                 if idx < len(distances):
                     chunk_info['distance'] = distances[idx]
                 chunks.append(chunk_info)
 
         # Limit to requested count
-        chunks = chunks[:count]
+        chunks = chunks[:requested_count]
 
         return JSONCodec.dumps(chunks, ensure_ascii=False)
     except Exception as e:
