@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Brand from '$lib/components/common/Brand.svelte';
 	import DOMPurify from 'dompurify';
 	import { marked } from 'marked';
 
@@ -222,7 +223,7 @@
 />
 
 <div class="w-full h-screen max-h-[100dvh] text-white relative" id="auth-page">
-	<div class="w-full h-full absolute top-0 left-0 bg-white dark:bg-black"></div>
+	<div class="w-full h-full absolute top-0 left-0 bg-canvas"></div>
 
 	<div class="w-full absolute top-0 left-0 right-0 h-8 drag-region" />
 
@@ -254,13 +255,7 @@
 									<!-- LICENSE covers this Open WebUI sign-in logo.
 									Do not alter, remove, obscure, or replace it except as LICENSE permits:
 									https://docs.openwebui.com/license. -->
-									<img
-										id="logo"
-										crossorigin="anonymous"
-										src="{WEBUI_BASE_URL}/static/favicon.png"
-										class="size-24 rounded-full"
-										alt="{$WEBUI_NAME} logo"
-									/>
+									<Brand className="h-16" />
 								</div>
 							{/if}
 							<form
@@ -389,7 +384,7 @@
 									{#if $config?.features.enable_login_form || $config?.features.enable_ldap || form}
 										{#if mode === 'ldap'}
 											<button
-												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5 disabled:opacity-50 flex justify-center"
+												class="bg-brand text-brand-foreground hover:opacity-90 transition w-full rounded-xl font-medium text-sm py-2.5 disabled:opacity-50 flex justify-center"
 												type="submit"
 												disabled={submitting}
 											>
@@ -403,7 +398,7 @@
 											</button>
 										{:else}
 											<button
-												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5 disabled:opacity-50 flex justify-center"
+												class="bg-brand text-brand-foreground hover:opacity-90 transition w-full rounded-xl font-medium text-sm py-2.5 disabled:opacity-50 flex justify-center"
 												type="submit"
 												disabled={submitting}
 											>
@@ -625,13 +620,7 @@
 						<!-- LICENSE covers this Open WebUI sign-in logo.
 						Do not alter, remove, obscure, or replace it except as LICENSE permits:
 						https://docs.openwebui.com/license. -->
-						<img
-							id="logo"
-							crossorigin="anonymous"
-							src="{WEBUI_BASE_URL}/static/favicon.png"
-							class=" w-6 rounded-full"
-							alt=""
-						/>
+						<Brand className="h-8" showName />
 					</div>
 				</div>
 			</div>

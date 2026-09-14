@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Brand from '$lib/components/common/Brand.svelte';
 	import { toast } from 'svelte-sonner';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
@@ -116,6 +117,9 @@
 </script>
 
 <div class="m-auto w-full max-w-[58rem] px-1 @2xl:px-20 translate-y-6 py-24 text-center">
+	{#if !$selectedFolder}
+		<div class="mb-6 text-sm"><Brand className="h-10" showName /></div>
+	{/if}
 	{#if $temporaryChatEnabled}
 		<Tooltip
 			content={$i18n.t("This chat won't appear in history and your messages will not be saved.")}

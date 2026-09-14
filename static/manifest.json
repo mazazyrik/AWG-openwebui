@@ -1,1 +1,23 @@
-{}
+{
+  "name": "AWG GPT",
+  "short_name": "AWG GPT",
+  "icons": [
+    {
+      "src": "/static/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/static/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#141316",
+  "background_color": "#141316",
+  "display": "standalone",
+  "description": "AWG GPT — AWG corporate AI workspace.",
+  "start_url": "/"
+}

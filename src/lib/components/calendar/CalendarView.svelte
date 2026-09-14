@@ -155,7 +155,7 @@
 			</div>
 
 			<div
-				class="flex-1 grid grid-cols-7 auto-rows-fr min-h-0 rounded-2xl overflow-hidden bg-white dark:bg-gray-900 border border-gray-100/30 dark:border-gray-850/30"
+				class="flex-1 grid grid-cols-7 auto-rows-fr min-h-0 rounded-2xl overflow-hidden bg-surface border border-gray-100/30 dark:border-gray-850/30"
 			>
 				{#each monthDays as day, i}
 					{@const dayKey = new Date(day.getFullYear(), day.getMonth(), day.getDate())
@@ -207,7 +207,7 @@
 	{:else if view === 'week'}
 		<div class="flex-1 flex flex-col min-h-0 px-3 pb-3">
 			<div
-				class="flex-1 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100/30 dark:border-gray-850/30 overflow-hidden relative"
+				class="flex-1 rounded-2xl bg-surface border border-gray-100/30 dark:border-gray-850/30 overflow-hidden relative"
 			>
 				<div class="absolute inset-0 overflow-x-auto flex flex-col">
 					<div class="min-w-[43.75rem] flex flex-col flex-1">
@@ -289,7 +289,7 @@
 	{:else}
 		<div class="flex-1 flex flex-col min-h-0 px-3 pb-3">
 			<div
-				class="flex-1 rounded-2xl overflow-hidden bg-white dark:bg-gray-900 border border-gray-100/30 dark:border-gray-850/30 overflow-y-auto"
+				class="flex-1 rounded-2xl overflow-hidden bg-surface border border-gray-100/30 dark:border-gray-850/30 overflow-y-auto"
 			>
 				{#each hours as hour}
 					{@const hourEvents = getEventsForHour(currentDate, hour, filteredEvents)}
