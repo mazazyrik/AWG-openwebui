@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import os
 import random
@@ -108,6 +109,25 @@ def dev(
         forwarded_allow_ips='*',
         ws_per_message_deflate=UVICORN_WS_PER_MESSAGE_DEFLATE,
     )
+
+
+@app.command('confluence-worker')
+def confluence_worker(
+    poll_interval: int = 30,
+):
+    from open_webui.integrations.confluence.worker import run_worker
+
+    asyncio.run(run_worker(poll_interval=poll_interval))
+
+
+@app.command('confluence-import')
+def confluence_import(
+    dry_run: bool = True,
+    mode: str = 'full',
+):
+    from open_webui.integrations.confluence.worker import run_import
+
+    typer.echo(asyncio.run(run_import(mode=mode, dry_run=dry_run)))
 
 
 if __name__ == '__main__':
