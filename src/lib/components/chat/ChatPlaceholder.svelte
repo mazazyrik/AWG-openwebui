@@ -22,11 +22,11 @@
 
 	const i18n: any = getContext('i18n');
 
-	export let modelIds = [];
+	export let modelIds: string[] = [];
 	export let models = [];
 	export let atSelectedModel;
 
-	export let onSelect = (e) => {};
+	export let onSelect: (event: { type: 'prompt'; data: string }) => void = () => {};
 
 	let mounted = false;
 	let selectedModelIdx = 0;
@@ -82,10 +82,7 @@
 								alt="logo"
 								draggable="false"
 								on:error={(e) => {
-									// LICENSE covers this Open WebUI fallback logo.
-									// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-									// https://docs.openwebui.com/license.
-									e.currentTarget.src = '/favicon.png';
+									e.currentTarget.src = `${WEBUI_BASE_URL}/static/favicon.png`;
 								}}
 							/>
 						</Tooltip>

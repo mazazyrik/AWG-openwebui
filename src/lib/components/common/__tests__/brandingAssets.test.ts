@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 const asset = (name: string) => readFileSync(resolve(root, 'static/static', name));
+const appHtml = readFileSync(resolve(root, 'src/app.html'), 'utf8');
+const rootLayout = readFileSync(resolve(root, 'src/routes/+layout.svelte'), 'utf8');
 const manifest: {
 	name: string;
 	short_name: string;
@@ -47,5 +49,14 @@ describe('installable application branding', () => {
 
 	it('ships the same default model icon at the legacy URL', () => {
 		expect(readFileSync(resolve(root, 'static/favicon.png'))).toEqual(asset('favicon.png'));
+	});
+
+	it('keeps document favicon links on the packaged AWG assets', () => {
+		expect(appHtml).toContain('href="/static/favicon.png"');
+		expect(appHtml).toContain('href="/static/favicon.svg"');
+		expect(appHtml).toContain('href="/static/favicon.ico"');
+		expect(rootLayout).toContain(
+			'href="{WEBUI_BASE_URL}/static/favicon.png"'
+		);
 	});
 });
