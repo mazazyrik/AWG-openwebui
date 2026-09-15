@@ -24,12 +24,15 @@ def test_private_snapshot_is_owner_only_and_cannot_overwrite(tmp_path):
 
 
 def test_saved_judgment_requires_fact_next_to_source_and_aligned_output():
-    url = 'https://conf.awg.ru/p/123'
-    expected = {'facts': ['Person'], 'source_urls': [url], 'forbidden': ['https://conf.awg.ru/p/456']}
+    url = 'https://confluence.example.com/p/123'
+    expected = {'facts': ['Person'], 'source_urls': [url], 'forbidden': ['https://confluence.example.com/p/456']}
     answer = f'Person [S1] {url}'
     assert runtime.judge_saved_answer({'content': answer}, expected)['passed'] is True
     assert runtime.judge_saved_answer({'content': f'Person\n\n{url}'}, expected)['passed'] is False
-    assert runtime.judge_saved_answer({'content': answer + ' https://conf.awg.ru/p/456'}, expected)['passed'] is False
+    assert (
+        runtime.judge_saved_answer({'content': answer + ' https://confluence.example.com/p/456'}, expected)['passed']
+        is False
+    )
     assert (
         runtime.judge_saved_answer(
             {
@@ -94,9 +97,10 @@ async def test_timeout_stops_only_tasks_created_by_this_turn():
 
 
 def test_nonempty_structured_output_without_final_text_is_not_aligned():
-    expected = {'facts': ['Person'], 'source_urls': ['https://conf.awg.ru/p/123']}
+    expected = {'facts': ['Person'], 'source_urls': ['https://confluence.example.com/p/123']}
     result = runtime.judge_saved_answer(
-        {'content': 'Person https://conf.awg.ru/p/123', 'output': [{'type': 'reasoning', 'content': []}]}, expected
+        {'content': 'Person https://confluence.example.com/p/123', 'output': [{'type': 'reasoning', 'content': []}]},
+        expected,
     )
     assert result['content_output_aligned'] is False
     assert result['passed'] is False
@@ -345,7 +349,7 @@ async def test_repeated_runs_create_distinct_skill_names_from_run_identity(tmp_p
 
 @pytest.mark.parametrize('marker', ['', '[S2]'])
 def test_optional_marker_requirement_applies_next_to_fact_and_source(marker):
-    url = 'https://conf.awg.ru/p/123'
+    url = 'https://confluence.example.com/p/123'
     expected = {'kind': 'answer', 'facts': ['Person'], 'source_urls': [url], 'citation_marker_required': True}
     result = runtime.judge_saved_answer({'content': f'Person {marker} {url}'}, expected)
     assert result['passed'] is bool(marker)

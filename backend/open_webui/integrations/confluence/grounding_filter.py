@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from open_webui.integrations.confluence.client import ConfluenceClientError, ConfluenceMCPClient
 
+ALLOWED_SOURCE_HOST = 'conf.awg.ru'
 STATE_KEY = 'awg_confluence_grounding'
 log = logging.getLogger(__name__)
 UNKNOWN = 'В найденных материалах не удалось подтвердить ответ. Пришлите ссылку на нужную страницу — проверю её.'
@@ -134,7 +135,7 @@ def collect_sources(payloads: list[dict]) -> list[dict]:
             parsed = urlsplit(url)
         except ValueError:
             continue
-        if parsed.scheme != 'https' or parsed.netloc != 'conf.awg.ru':
+        if parsed.scheme != 'https' or parsed.netloc != ALLOWED_SOURCE_HOST:
             continue
         page_id = str(item.get('page_id') or '')
         key = (parsed.netloc, page_id or url)

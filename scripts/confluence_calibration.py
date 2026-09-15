@@ -40,6 +40,14 @@ def load_filter(source: str, name: str):
     module = ModuleType(name)
     sys.modules[name] = module
     exec(compile(source, name, 'exec'), module.__dict__)
+    module.ALLOWED_SOURCE_HOST = 'confluence.example.com'
+    probe_url = 'https://confluence.example.com/pages/viewpage.action?pageId=1'
+    collector = getattr(module, 'collect_sources', None)
+    if not callable(collector):
+        raise ValueError('Calibration filter lacks a verifiable synthetic source collector')
+    probe = collector([{'found': True, 'results': [{'url': probe_url, 'page_id': '1', 'text': 'Synthetic source'}]}])
+    if len(probe) != 1 or probe[0].get('url') != probe_url:
+        raise ValueError('Calibration filter rejects the synthetic source host; comparison aborted')
     return module.Filter()
 
 
@@ -153,6 +161,8 @@ async def run(args):
         ('baseline', baseline_code, parameters.get('system', ''), baseline_skill),
         ('candidate', candidate_code, args.prompt.read_text(), args.skill.read_text()),
     ]
+    load_filter(baseline_code, 'calibration_preflight_baseline')
+    load_filter(candidate_code, 'calibration_preflight_candidate')
     decoding = {
         key: parameters[key]
         for key in (

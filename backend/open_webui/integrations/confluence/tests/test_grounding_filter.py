@@ -22,7 +22,7 @@ from open_webui.integrations.confluence.grounding_filter import (
 )
 from pydantic import ValidationError
 
-URL = 'https://conf.awg.ru/pages/viewpage.action?pageId=123'
+URL = 'https://confluence.example.com/pages/viewpage.action?pageId=123'
 SOURCE = {'id': 'S1', 'page_id': '123', 'url': URL, 'text': 'Разработчик указан в команде.', 'title': 'Команда'}
 
 
@@ -35,7 +35,7 @@ def canonical(page_id='123', space='YANDEX', text='Команда проекта
         'metadata': {
             'id': page_id,
             'title': 'Команда',
-            'url': f'https://conf.awg.ru/pages/viewpage.action?pageId={page_id}',
+            'url': f'https://confluence.example.com/pages/viewpage.action?pageId={page_id}',
             'space': {'key': space},
             'version': 9,
             'content': {'value': text, 'format': 'markdown'},
@@ -46,6 +46,9 @@ def canonical(page_id='123', space='YANDEX', text='Команда проекта
 @pytest.fixture(autouse=True)
 def mcp_config(monkeypatch):
     monkeypatch.setenv('CONFLUENCE_MCP_URL', 'http://mcp.test/mcp')
+    monkeypatch.setattr(
+        'open_webui.integrations.confluence.grounding_filter.ALLOWED_SOURCE_HOST', 'confluence.example.com'
+    )
 
 
 @pytest.mark.asyncio
@@ -97,10 +100,10 @@ async def test_wrong_canonical_page_id_is_rejected():
 @pytest.mark.parametrize(
     'url',
     [
-        'http://conf.awg.ru/p',
-        'https://conf.awg.ru:443/p',
-        'https://conf.awg.ru./p',
-        'https://user@conf.awg.ru/p',
+        'http://confluence.example.com/p',
+        'https://confluence.example.com:443/p',
+        'https://confluence.example.com./p',
+        'https://user@confluence.example.com/p',
         'https://evil.test/p',
         'https://[invalid',
     ],
@@ -110,7 +113,7 @@ def test_untrusted_or_malformed_source_url_is_rejected(url):
 
 
 def test_sources_deduplicate_pages_and_stop_at_eight():
-    results = [{**SOURCE, 'page_id': str(i), 'url': f'https://conf.awg.ru/p/{i}'} for i in range(20)]
+    results = [{**SOURCE, 'page_id': str(i), 'url': f'https://confluence.example.com/p/{i}'} for i in range(20)]
     actual = collect_sources([{'found': True, 'results': results}, {'found': True, 'results': results}])
     assert len(actual) == 8
     assert len({source['page_id'] for source in actual}) == 8
@@ -252,7 +255,7 @@ def test_false_lookup_valve_is_rejected_explicitly():
 
 
 def test_answer_can_cite_second_source_without_first():
-    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://conf.awg.ru/p/456'}
+    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://confluence.example.com/p/456'}
     answer = grounded_answer('Подтверждённый факт [S2]', [SOURCE, second])
     assert second['url'] in answer
     assert '[S1]' not in answer
@@ -260,7 +263,7 @@ def test_answer_can_cite_second_source_without_first():
 
 
 def test_url_without_known_source_is_rejected():
-    assert grounded_answer('Разработчик https://conf.awg.ru/p/unknown', [SOURCE]) == CITATION_FAILURE
+    assert grounded_answer('Разработчик https://confluence.example.com/p/unknown', [SOURCE]) == CITATION_FAILURE
 
 
 @pytest.mark.asyncio
@@ -302,7 +305,7 @@ def test_coverage_repair_rejects_numeric_and_factual_intros(intro):
 
 
 def test_coverage_intro_with_multiple_sources_is_not_assigned_arbitrarily():
-    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://conf.awg.ru/p/456'}
+    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://confluence.example.com/p/456'}
     answer = 'Не могу предоставить полный список разработчиков AWG.\n\nФакт [S1]'
     assert grounded_answer(answer, [SOURCE, second]) == CITATION_FAILURE
 
@@ -317,7 +320,7 @@ def test_coverage_intro_with_multiple_sources_is_not_assigned_arbitrarily():
 def test_negative_scope_and_exact_coverage_require_one_source(intro):
     text = f'{intro}\n\nФакт [S1]'
     assert grounded_answer(text, [SOURCE]).split('\n\n')[0] == f'{intro} [S1] {URL}'
-    second = {**SOURCE, 'id': 'S2', 'url': 'https://conf.awg.ru/p/456'}
+    second = {**SOURCE, 'id': 'S2', 'url': 'https://confluence.example.com/p/456'}
     assert grounded_answer(text, [SOURCE, second]) == CITATION_FAILURE
 
 
@@ -334,7 +337,7 @@ def test_scope_repair_rejects_additional_sentence_digits_and_person_fact(intro):
 
 
 def test_multiple_sources_allow_fact_and_limitation_with_matching_citation_in_same_paragraph():
-    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://conf.awg.ru/p/456'}
+    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://confluence.example.com/p/456'}
     answer = f'Подтверждена проектная роль. Это не полный список. [S2] {second["url"]}'
     assert grounded_answer(answer, [SOURCE, second]) == answer
 
@@ -345,7 +348,7 @@ def test_inverted_scope_with_bounded_noun_phrase_is_cited():
     assert grounded_answer(text, [SOURCE]).split('\n\n')[0] == (
         f'По этой странице нельзя подтвердить полный список. [S1] {URL}'
     )
-    second = {**SOURCE, 'id': 'S2', 'url': 'https://conf.awg.ru/p/456'}
+    second = {**SOURCE, 'id': 'S2', 'url': 'https://confluence.example.com/p/456'}
     assert grounded_answer(text, [SOURCE, second]) == CITATION_FAILURE
 
 
@@ -376,7 +379,7 @@ def test_leading_source_qualifier_discards_free_group(noun_group):
     assert answer.split('\n\n')[0] == f'По этой странице нельзя подтвердить полный список. [S1] {URL}'
     assert 'Иван' not in answer
     assert 'руководит' not in answer
-    second = {**SOURCE, 'id': 'S2', 'url': 'https://conf.awg.ru/p/456'}
+    second = {**SOURCE, 'id': 'S2', 'url': 'https://confluence.example.com/p/456'}
     assert grounded_answer(text, [SOURCE, second]) == CITATION_FAILURE
 
 
@@ -620,7 +623,7 @@ async def test_hydration_adds_excerpt_only_to_top_relevant_list_source(monkeypat
         AsyncMock(
             side_effect=[
                 {**SOURCE, 'text': text},
-                {**SOURCE, 'page_id': '456', 'url': 'https://conf.awg.ru/p/456', 'text': text},
+                {**SOURCE, 'page_id': '456', 'url': 'https://confluence.example.com/p/456', 'text': text},
             ]
         ),
     )

@@ -103,7 +103,7 @@ def test_native_citations_preserve_external_url_without_local_file_route():
             'type': 'external',
             'source': 'Team',
             'content': 'One',
-            'url': 'https://conf.awg.ru/p/123',
+            'url': 'https://confluence.example.com/p/123',
             'page_id': '123',
             'version': 9,
             'hash': 'hash',
@@ -114,7 +114,7 @@ def test_native_citations_preserve_external_url_without_local_file_route():
             'type': 'external',
             'source': 'Team',
             'content': 'Two',
-            'url': 'https://conf.awg.ru/p/123',
+            'url': 'https://confluence.example.com/p/123',
             'page_id': '123',
         },
         {'file_id': 'local', 'source': 'Local', 'content': 'Local content'},
@@ -190,6 +190,8 @@ async def test_mixed_grep_reports_only_accessible_external_bases(monkeypatch, al
 async def test_incomplete_model_answer_cannot_pass_calibration(tmp_path, monkeypatch, temperature):
     candidate = ROOT / 'backend/open_webui/integrations/confluence/grounding_filter.py'
     baseline = """from pydantic import BaseModel
+def collect_sources(payloads):
+    return payloads[0]['results']
 class Filter:
     class Valves(BaseModel):
         lookup_url: str = ''
@@ -205,7 +207,7 @@ class Filter:
         connection.execute('INSERT INTO function VALUES (?, ?, ?)', ('test', baseline, '{}'))
         connection.execute('INSERT INTO skill VALUES (?, ?)', ('test', ''))
         connection.execute('INSERT INTO model VALUES (?, ?)', ('test', '{}'))
-    url = 'https://conf.awg.ru/p/123'
+    url = 'https://confluence.example.com/p/123'
     payload = {'found': True, 'mode': 'index', 'results': [{'page_id': '123', 'url': url, 'text': 'Person'}]}
     cases = tmp_path / 'cases.json'
     cases.write_text(
@@ -290,7 +292,7 @@ class Filter:
     ],
 )
 def test_qualified_unknown_requires_unknown_total_and_rejects_numeric_claims(text, passed):
-    source = {'url': 'https://conf.awg.ru/p/900001'}
+    source = {'url': 'https://confluence.example.com/p/900001'}
     expected = {'kind': 'safe_unknown', 'subject': 'count', 'facts': [], 'forbidden': [], 'source_ids': ['S1']}
     answer = f'{text} [S1] {source["url"]}'
     assert calibration.evaluate(answer, expected, [source], 'answer')['passed'] is passed
@@ -298,7 +300,7 @@ def test_qualified_unknown_requires_unknown_total_and_rejects_numeric_claims(tex
 
 @pytest.mark.parametrize('claim', ['реестр существует', 'реестра не существует', 'реестр отсутствует'])
 def test_safe_unknown_rejects_registry_claims_even_with_uncertainty(claim):
-    source = {'url': 'https://conf.awg.ru/p/900001'}
+    source = {'url': 'https://confluence.example.com/p/900001'}
     expected = {
         'kind': 'safe_unknown', 'subject': 'registry', 'facts': [], 'forbidden': [], 'source_ids': ['S1'],
         'unsafe_claims': ['реестр существует', 'реестра не существует', 'реестр отсутствует'],
@@ -308,7 +310,7 @@ def test_safe_unknown_rejects_registry_claims_even_with_uncertainty(claim):
 
 
 def test_safe_unknown_registry_answer_requires_real_citation():
-    source = {'url': 'https://conf.awg.ru/p/900001'}
+    source = {'url': 'https://confluence.example.com/p/900001'}
     expected = {'kind': 'safe_unknown', 'subject': 'registry', 'facts': [], 'forbidden': [], 'source_ids': ['S1']}
     answer = f'Источник не подтверждает наличие реестра [S1] {source["url"]}'
     assert calibration.evaluate(answer, expected, [source], 'answer')['passed']
@@ -325,7 +327,7 @@ def test_safe_unknown_registry_answer_requires_real_citation():
     ],
 )
 def test_safe_unknown_rejects_uncontrolled_unknown_and_wrong_subject(subject, text, kind):
-    source = {'url': 'https://conf.awg.ru/p/900001'}
+    source = {'url': 'https://confluence.example.com/p/900001'}
     expected = {
         'kind': 'safe_unknown', 'subject': subject, 'facts': [], 'forbidden': [], 'source_ids': ['S1'],
     }
@@ -342,3 +344,30 @@ def test_temperature_argument_rejects_out_of_range(value):
 @pytest.mark.parametrize('value', ['0', '2'])
 def test_temperature_argument_accepts_bounds(value):
     assert calibration.temperature_argument(value) == float(value)
+
+
+def test_historical_hardcoded_host_filter_fails_before_comparison():
+    source = """
+from urllib.parse import urlsplit
+
+class Filter:
+    pass
+
+def collect_sources(payloads):
+    sources = []
+    for item in payloads[0]['results']:
+        parsed = urlsplit(item['url'])
+        if parsed.scheme != 'https' or parsed.netloc != 'historical.example.com':
+            continue
+        sources.append(item)
+    return sources
+"""
+    with pytest.raises(ValueError, match='rejects the synthetic source host; comparison aborted'):
+        calibration.load_filter(source, 'historical_host_filter')
+
+
+def test_current_filter_accepts_synthetic_host_in_calibration():
+    source = (ROOT / 'backend/open_webui/integrations/confluence/grounding_filter.py').read_text()
+    instance = calibration.load_filter(source, 'current_host_filter')
+    module = sys.modules[instance.__class__.__module__]
+    assert module.ALLOWED_SOURCE_HOST == 'confluence.example.com'
