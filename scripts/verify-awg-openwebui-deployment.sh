@@ -2,68 +2,134 @@
 set -eu
 
 server='root@myai.awg.ru'
-image='ghcr.io/mazazyrik/awg-openwebui:git-205d4b9'
 compose='/root/Docker/docker-compose.yml'
 rag_services='/opt/awg-confluence-rag/deploy/docker-compose.services.yml'
 rag_openwebui='/opt/awg-confluence-rag/deploy/docker-compose.openwebui.yml'
-rag_gateway='/opt/awg-confluence-rag/deploy/docker-compose.cursor-mcp.yml'
+rag_ssh_tunnel='/opt/awg-confluence-rag/deploy/docker-compose.ssh-tunnel.yml'
 awg_override='/root/Docker/docker-compose.awg-openwebui.yml'
 
-require_gateway_target() {
-    approved_bind_ip=${AWG_MCP_APPROVED_BIND_IP:-}
-    approved_vpn_interface=${AWG_MCP_APPROVED_VPN_INTERFACE:-}
-    gateway_host=${AWG_MCP_GATEWAY_HOST:-}
-
-    case "$approved_bind_ip" in
-        '' | *[!0-9.]*)
-            echo 'AWG_MCP_APPROVED_BIND_IP must be an approved private or VPN IPv4 address' >&2
-            exit 2
-            ;;
-    esac
-    printf '%s\n' "$approved_bind_ip" | awk -F. '
-        NF == 4 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ &&
-        $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ &&
-        $1 <= 255 && $2 <= 255 && $3 <= 255 && $4 <= 255 &&
-        (($1 == 10) || ($1 == 172 && $2 >= 16 && $2 <= 31) ||
-         ($1 == 192 && $2 == 168) || ($1 == 100 && $2 >= 64 && $2 <= 127)) { valid = 1 }
-        END { exit valid ? 0 : 1 }
-    ' || {
-        echo 'AWG_MCP_APPROVED_BIND_IP must be an approved private or VPN IPv4 address' >&2
+require_release_target() {
+    expected_image=${AWG_OPENWEBUI_IMAGE:-}
+    printf '%s\n' "$expected_image" | grep -Eq \
+        '^ghcr\.io/mazazyrik/awg-openwebui@sha256:[0-9a-f]{64}$' || {
+        echo 'AWG_OPENWEBUI_IMAGE must be the immutable AWG OpenWebUI GHCR digest' >&2
         exit 2
     }
-    case "$approved_vpn_interface" in
-        '' | *[!A-Za-z0-9_.:-]*)
-            echo 'AWG_MCP_APPROVED_VPN_INTERFACE is required' >&2
+    ssh_port=${AWG_MCP_SSH_PORT:-19101}
+    case "$ssh_port" in
+        '' | *[!0-9]*)
+            echo 'AWG_MCP_SSH_PORT must be a TCP port from 1024 to 65535' >&2
             exit 2
             ;;
     esac
-    case "$gateway_host" in
-        '' | localhost | *[!A-Za-z0-9.-]*)
-            echo 'AWG_MCP_GATEWAY_HOST is required' >&2
-            exit 2
-            ;;
-    esac
+    if [ "$ssh_port" -lt 1024 ] || [ "$ssh_port" -gt 65535 ]; then
+        echo 'AWG_MCP_SSH_PORT must be a TCP port from 1024 to 65535' >&2
+        exit 2
+    fi
 }
 
 case "${1:-}" in
     compose)
-        require_gateway_target
-        ssh -o BatchMode=yes "$server" "docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' config --quiet && docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' config --format json | jq -e --arg bind '$approved_bind_ip' '.services.openwebui.image == \"$image\" and .services[\"openwebui-confluence-worker\"].image == \"$image\" and .services.openwebui.environment.CONFLUENCE_RAG_API_URL == \"http://confluence-rag-api:9100\" and .services.openwebui.environment.CONFLUENCE_MCP_URL == \"http://mcp-atlassian:9000/mcp\" and .services.openwebui.environment.CONFLUENCE_QDRANT_URL == \"http://qdrant:6333\" and ((.services[\"mcp-atlassian\"].ports // []) | length == 0) and ((.services[\"confluence-rag-mcp\"].ports // []) | length == 0) and (.services[\"mcp-atlassian\"].network_mode != \"host\") and (.services[\"confluence-rag-mcp\"].network_mode != \"host\") and (.services.openwebui.networks | has(\"ai\")) and (.services[\"openwebui-confluence-worker\"].networks | has(\"ai\")) and (.services[\"confluence-rag-mcp\"].networks | has(\"ai\")) and ((.services[\"confluence-rag-gateway\"].ports // []) | length == 1) and (.services[\"confluence-rag-gateway\"].ports[0].target == 443) and ((.services[\"confluence-rag-gateway\"].ports[0].published | tostring) == \"443\") and (.services[\"confluence-rag-gateway\"].ports[0].host_ip == \$bind)' >/dev/null && echo compose-ready"
+        require_release_target
+        ssh -o BatchMode=yes "$server" "AWG_OPENWEBUI_IMAGE='$expected_image' CONFLUENCE_RAG_MCP_SSH_PORT='$ssh_port' docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_ssh_tunnel' -f '$awg_override' config --quiet && AWG_OPENWEBUI_IMAGE='$expected_image' CONFLUENCE_RAG_MCP_SSH_PORT='$ssh_port' docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_ssh_tunnel' -f '$awg_override' config --format json | jq -e --arg image '$expected_image' --arg port '$ssh_port' '.services.openwebui.image == \$image and .services[\"openwebui-confluence-worker\"].image == \$image and .services.openwebui.environment.CONFLUENCE_RAG_API_URL == \"http://confluence-rag-api:9100\" and .services.openwebui.environment.CONFLUENCE_MCP_URL == \"http://mcp-atlassian:9000/mcp\" and .services.openwebui.environment.CONFLUENCE_QDRANT_URL == \"http://qdrant:6333\" and ((.services[\"mcp-atlassian\"].ports // []) | length == 0) and (.services[\"mcp-atlassian\"].network_mode != \"host\") and (.services[\"confluence-rag-mcp\"].network_mode != \"host\") and (.services.openwebui.networks | has(\"ai\")) and (.services[\"openwebui-confluence-worker\"].networks | has(\"ai\")) and (.services[\"confluence-rag-mcp\"].networks | has(\"ai\")) and ((.services[\"confluence-rag-mcp\"].ports // []) | length == 1) and (.services[\"confluence-rag-mcp\"].ports[0].target == 9101) and ((.services[\"confluence-rag-mcp\"].ports[0].published | tostring) == \$port) and (.services[\"confluence-rag-mcp\"].ports[0].host_ip == \"127.0.0.1\")' >/dev/null && echo compose-ready"
         ;;
     backup)
         ssh -o BatchMode=yes "$server" "test -n \"\$(find /opt/openwebui/backups -maxdepth 1 -type f -name 'webui.db.pre-confluence-*' -print -quit)\" && echo backup-ready"
         ;;
     containers)
-        require_gateway_target
-        ssh -o BatchMode=yes "$server" "set -eu; openwebui_id=\$(docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' ps -q openwebui); worker_id=\$(docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' ps -q openwebui-confluence-worker); source_id=\$(docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' ps -q mcp-atlassian); mcp_id=\$(docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' ps -q confluence-rag-mcp); gateway_id=\$(docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_gateway' -f '$awg_override' ps -q confluence-rag-gateway); test -n \"\$openwebui_id\"; test -n \"\$worker_id\"; test -n \"\$source_id\"; test -n \"\$mcp_id\"; test -n \"\$gateway_id\"; test \"\$(docker inspect \"\$openwebui_id\" --format '{{.Config.Image}}')\" = '$image'; test \"\$(docker inspect \"\$worker_id\" --format '{{.Config.Image}}')\" = '$image'; test \"\$(docker inspect \"\$openwebui_id\" --format '{{.State.Health.Status}}')\" = healthy; test \"\$(docker inspect \"\$worker_id\" --format '{{.State.Running}}')\" = true; test \"\$(docker inspect \"\$mcp_id\" --format '{{.State.Running}}')\" = true; test \"\$(docker inspect \"\$gateway_id\" --format '{{.State.Running}}')\" = true; docker exec \"\$mcp_id\" python -c 'from confluence_rag.mcp_server import mcp; assert mcp.auth.configured'; test \"\$(docker inspect \"\$source_id\" --format '{{.HostConfig.NetworkMode}}')\" != host; test \"\$(docker inspect \"\$mcp_id\" --format '{{.HostConfig.NetworkMode}}')\" != host; test -z \"\$(docker port \"\$source_id\")\"; test -z \"\$(docker port \"\$mcp_id\")\"; docker inspect \"\$gateway_id\" --format '{{json .HostConfig.PortBindings}}' | jq -e --arg bind '$approved_bind_ip' 'length == 1 and (.\"443/tcp\" | length == 1) and .\"443/tcp\"[0].HostIp == \$bind and .\"443/tcp\"[0].HostPort == \"443\"' >/dev/null; ip -o -4 addr show dev '$approved_vpn_interface' | awk '{print \$4}' | cut -d/ -f1 | grep -Fqx '$approved_bind_ip'; echo containers-ready"
+        require_release_target
+        ssh -o BatchMode=yes "$server" "set -eu; openwebui_id=\$(AWG_OPENWEBUI_IMAGE='$expected_image' CONFLUENCE_RAG_MCP_SSH_PORT='$ssh_port' docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_ssh_tunnel' -f '$awg_override' ps -q openwebui); worker_id=\$(AWG_OPENWEBUI_IMAGE='$expected_image' CONFLUENCE_RAG_MCP_SSH_PORT='$ssh_port' docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_ssh_tunnel' -f '$awg_override' ps -q openwebui-confluence-worker); source_id=\$(AWG_OPENWEBUI_IMAGE='$expected_image' CONFLUENCE_RAG_MCP_SSH_PORT='$ssh_port' docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_ssh_tunnel' -f '$awg_override' ps -q mcp-atlassian); mcp_id=\$(AWG_OPENWEBUI_IMAGE='$expected_image' CONFLUENCE_RAG_MCP_SSH_PORT='$ssh_port' docker compose -f '$compose' -f '$rag_services' -f '$rag_openwebui' -f '$rag_ssh_tunnel' -f '$awg_override' ps -q confluence-rag-mcp); test -n \"\$openwebui_id\"; test -n \"\$worker_id\"; test -n \"\$source_id\"; test -n \"\$mcp_id\"; test \"\$(docker inspect \"\$openwebui_id\" --format '{{.Config.Image}}')\" = '$expected_image'; test \"\$(docker inspect \"\$worker_id\" --format '{{.Config.Image}}')\" = '$expected_image'; test \"\$(docker inspect \"\$openwebui_id\" --format '{{.State.Health.Status}}')\" = healthy; test \"\$(docker inspect \"\$worker_id\" --format '{{.State.Running}}')\" = true; test \"\$(docker inspect \"\$mcp_id\" --format '{{.State.Running}}')\" = true; docker exec \"\$mcp_id\" python -c 'from confluence_rag.mcp_server import mcp; assert mcp.auth.configured'; test \"\$(docker inspect \"\$source_id\" --format '{{.HostConfig.NetworkMode}}')\" != host; test \"\$(docker inspect \"\$mcp_id\" --format '{{.HostConfig.NetworkMode}}')\" != host; test -z \"\$(docker port \"\$source_id\")\"; docker inspect \"\$mcp_id\" --format '{{json .HostConfig.PortBindings}}' | jq -e --arg port '$ssh_port' 'length == 1 and (.\"9101/tcp\" | length == 1) and .\"9101/tcp\"[0].HostIp == \"127.0.0.1\" and .\"9101/tcp\"[0].HostPort == \$port' >/dev/null; echo containers-ready"
         ;;
     network)
-        require_gateway_target
-        auth_status=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --resolve "$gateway_host:443:$approved_bind_ip" "https://$gateway_host/mcp")
-        args_status=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --resolve "$gateway_host:443:$approved_bind_ip" "https://$gateway_host/mcp?probe=1")
-        test "$auth_status" = 401
-        test "$args_status" = 404
-        echo network-ready
+        local_port=${AWG_MCP_LOCAL_PORT:-19101}
+        token_file=${AWG_MCP_CURSOR_TOKEN_FILE:-}
+        case "$local_port" in
+            '' | *[!0-9]*)
+                echo 'AWG_MCP_LOCAL_PORT must be a TCP port from 1024 to 65535' >&2
+                exit 2
+                ;;
+        esac
+        if [ "$local_port" -lt 1024 ] || [ "$local_port" -gt 65535 ]; then
+            echo 'AWG_MCP_LOCAL_PORT must be a TCP port from 1024 to 65535' >&2
+            exit 2
+        fi
+        test -f "$token_file" || {
+            echo 'AWG_MCP_CURSOR_TOKEN_FILE must name the mode-600 Cursor token file' >&2
+            exit 2
+        }
+        token_mode=$(stat -f %Lp "$token_file" 2>/dev/null || stat -c %a "$token_file")
+        test "$token_mode" = 600 || {
+            echo 'AWG_MCP_CURSOR_TOKEN_FILE must have mode 600' >&2
+            exit 2
+        }
+        AWG_MCP_CURSOR_TOKEN_FILE="$token_file" python3 - "$local_port" <<'PY'
+import http.client
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def payload(body: bytes) -> dict:
+    text = body.decode()
+    for line in text.splitlines():
+        if line.startswith('data:'):
+            return json.loads(line.removeprefix('data:').strip())
+    return json.loads(text)
+
+
+port = int(sys.argv[1])
+token = Path(os.environ['AWG_MCP_CURSOR_TOKEN_FILE']).read_text().strip()
+assert len(token.encode()) >= 32
+connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+initialize = json.dumps({
+    'jsonrpc': '2.0',
+    'id': 1,
+    'method': 'initialize',
+    'params': {
+        'protocolVersion': '2025-06-18',
+        'capabilities': {},
+        'clientInfo': {'name': 'awg-deployment-verifier', 'version': '1'},
+    },
+})
+base_headers = {
+    'Accept': 'application/json, text/event-stream',
+    'Content-Type': 'application/json',
+}
+connection.request('POST', '/mcp', body=initialize, headers=base_headers)
+response = connection.getresponse()
+response.read()
+assert response.status == 401
+headers = {**base_headers, 'Authorization': f'Bearer {token}'}
+connection.request('POST', '/mcp', body=initialize, headers=headers)
+response = connection.getresponse()
+initialized = payload(response.read())
+assert response.status == 200 and 'serverInfo' in initialized.get('result', {})
+session_id = response.getheader('mcp-session-id')
+assert session_id
+session_headers = {**headers, 'Mcp-Session-Id': session_id}
+connection.request(
+    'POST',
+    '/mcp',
+    body=json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}),
+    headers=session_headers,
+)
+response = connection.getresponse()
+response.read()
+assert response.status in {200, 202}
+connection.request(
+    'POST',
+    '/mcp',
+    body=json.dumps({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}}),
+    headers=session_headers,
+)
+response = connection.getresponse()
+listed = payload(response.read())
+assert response.status == 200
+names = {tool['name'] for tool in listed['result']['tools']}
+assert names == {'confluence_sync_status', 'search_confluence'}
+print('network-ready tools=confluence_sync_status,search_confluence')
+PY
         ;;
     module)
         ssh -o BatchMode=yes "$server" "docker exec openwebui python -c \"import sqlite3; import open_webui.integrations.confluence.worker; connection = sqlite3.connect('/app/backend/data/webui.db'); tables = {row[0] for row in connection.execute('select name from sqlite_master where type=\\\"table\\\"')}; assert {'confluence_connection', 'confluence_page', 'confluence_run'} <= tables\" && echo module-ready"
