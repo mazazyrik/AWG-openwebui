@@ -472,6 +472,11 @@ def get_citation_source_from_tool_result(
                 note_id = chunk.get('note_id', '')
                 chunk_type = chunk.get('type', 'file')
                 content = chunk.get('content', '')
+                citation_fields = {
+                    field: chunk[field]
+                    for field in ('title', 'url', 'page_id', 'version', 'space', 'hash', 'knowledge_id')
+                    if chunk.get(field) is not None
+                }
 
                 # Use file_id or note_id as the key
                 key = file_id or note_id or source_name
@@ -482,6 +487,7 @@ def get_citation_source_from_tool_result(
                             'id': file_id or note_id,
                             'name': source_name,
                             'type': chunk_type,
+                            **citation_fields,
                         },
                         'document': [],
                         'metadata': [],
@@ -490,9 +496,10 @@ def get_citation_source_from_tool_result(
                 sources_by_file[key]['document'].append(content)
                 sources_by_file[key]['metadata'].append(
                     {
-                        'file_id': file_id,
+                        **({'file_id': file_id} if chunk_type != 'external' else {}),
                         'name': source_name,
                         'source': source_name,
+                        **citation_fields,
                         **({'note_id': note_id} if note_id else {}),
                     }
                 )
