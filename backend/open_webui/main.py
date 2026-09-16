@@ -134,6 +134,16 @@ from open_webui.events import (
 from open_webui.events import (
     get_event_catalog as get_event_catalog_items,
 )
+from open_webui.integrations.confluence.grounding_filter import UNAVAILABLE, finalize_awg_answer
+from open_webui.integrations.confluence.runtime import (
+    AwgResponseRejected,
+    build_awg_response,
+    clear_awg_request_state,
+    extract_awg_provider_text,
+    get_awg_client_stream,
+    get_awg_request_state,
+    register_awg_invocation,
+)
 from open_webui.internal.db import engine, get_async_session
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
@@ -1625,31 +1635,73 @@ async def chat_completion(
         )
 
     async def process_chat(request, form_data, user, metadata, model, tasks=None):
+        is_awg_request = False
+        awg_cleanup_deferred = False
+        register_awg_invocation(request, model, metadata)
+        form_data['metadata'] = metadata
         try:
             ctx = None
             if metadata.get('assistant_message_id'):
                 ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, [])
             form_data, metadata, events = await process_chat_payload(request, form_data, user, metadata, model)
 
-            if await drain_approved_tool_calls(request, form_data, user, model, metadata):
-                return {'status': True, 'chat_id': metadata.get('chat_id'), 'paused': True}
+            is_awg_request, awg_state = get_awg_request_state(request, model, metadata)
+            if is_awg_request:
+                answer = UNAVAILABLE
+                if awg_state is not None:
+                    if awg_state.provider_required and not awg_state.unavailable and awg_state.sources:
+                        try:
+                            provider_response = await chat_completion_handler(request, form_data, user)
+                            if isinstance(provider_response, JSONResponse) and provider_response.status_code >= 400:
+                                raise AwgResponseRejected('provider_response_error')
+                            provider_answer = await extract_awg_provider_text(provider_response)
+                            answer = finalize_awg_answer(awg_state, provider_answer)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            log.warning('AWG GPT provider response rejected')
+                    else:
+                        answer = finalize_awg_answer(awg_state, '')
+                response = build_awg_response(
+                    answer,
+                    awg_state.model_id if awg_state is not None else str(model.get('id') or ''),
+                    awg_state.client_stream
+                    if awg_state is not None
+                    else get_awg_client_stream(request, model, metadata),
+                )
+            else:
+                if await drain_approved_tool_calls(request, form_data, user, model, metadata):
+                    return {'status': True, 'chat_id': metadata.get('chat_id'), 'paused': True}
 
-            response = await chat_completion_handler(request, form_data, user)
+                response = await chat_completion_handler(request, form_data, user)
 
-            # When the upstream provider returns an error (e.g. HTTP 400
-            # content-filter, quota exceeded), generate_chat_completion
-            # returns a JSONResponse instead of raising.  Detect this and
-            # raise so the except-block below emits chat:message:error +
-            # chat:tasks:cancel, unblocking the frontend.
-            if isinstance(response, JSONResponse) and response.status_code >= 400:
-                raise Exception(get_response_error_detail(response))
+                # When the upstream provider returns an error (e.g. HTTP 400
+                # content-filter, quota exceeded), generate_chat_completion
+                # returns a JSONResponse instead of raising.  Detect this and
+                # raise so the except-block below emits chat:message:error +
+                # chat:tasks:cancel, unblocking the frontend.
+                if isinstance(response, JSONResponse) and response.status_code >= 400:
+                    raise Exception(get_response_error_detail(response))
 
             if ctx is None:
                 ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, events)
             else:
                 ctx.update(form_data=form_data, metadata=metadata, events=events)
 
-            return await process_chat_response(response, ctx)
+            processed_response = await process_chat_response(response, ctx)
+            if is_awg_request and isinstance(processed_response, StreamingResponse):
+                original_iterator = processed_response.body_iterator
+
+                async def awg_cleanup_iterator():
+                    try:
+                        async for chunk in original_iterator:
+                            yield chunk
+                    finally:
+                        clear_awg_request_state(request, model, metadata)
+
+                processed_response.body_iterator = awg_cleanup_iterator()
+                awg_cleanup_deferred = True
+            return processed_response
         except asyncio.CancelledError:
             log.info('Chat processing was cancelled')
             try:
@@ -1703,6 +1755,8 @@ async def chat_completion(
                     detail=error_detail,
                 )
         finally:
+            if not awg_cleanup_deferred:
+                clear_awg_request_state(request, model, metadata)
             # Clean up MCP clients.  Each client is isolated so one
             # failure doesn't skip the rest.
             #
@@ -1794,19 +1848,27 @@ async def chat_completion(
             if not assistant_message_id:
                 continue
 
-            # Per-model metadata: own message_id + model
-            per_model_metadata = {
-                **metadata,
-                'message_id': assistant_message_id,
-                'task_id': str(uuid4()),
-            }
-
-            # Per-model form_data: own model
-            model_form_data = {
-                **form_data,
-                'model': target_model_id,
-                'metadata': per_model_metadata,
-            }
+            try:
+                per_model_metadata = copy.deepcopy(metadata)
+                model_form_data = copy.deepcopy(form_data)
+            except Exception as error:
+                log.warning('Unable to isolate side-by-side chat payload')
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Unable to isolate chat payload',
+                ) from error
+            per_model_metadata.update(
+                {
+                    'message_id': assistant_message_id,
+                    'task_id': str(uuid4()),
+                }
+            )
+            model_form_data.update(
+                {
+                    'model': target_model_id,
+                    'metadata': per_model_metadata,
+                }
+            )
 
             # Resolve the model object for this specific model
             resolved_model = request.app.state.MODELS.get(target_model_id, model)
