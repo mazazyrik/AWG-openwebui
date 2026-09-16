@@ -2625,10 +2625,12 @@ async def grep_knowledge_files(
     __model_knowledge__: Optional[list[dict]] = None,
 ) -> str:
     """
-    Search for exact text across knowledge files. Returns matching lines with line numbers.
+    Search for exact text across local knowledge files. Returns matching lines with line numbers.
     Unlike query_knowledge_files (semantic/vector search), this performs exact string matching.
     Automatically detects regex patterns (e.g. "error|warn", "version \\d+").
     Helpful for literal strings, identifiers, error messages, or regex-style searches.
+    External knowledge bases, including Confluence, are not searched by this tool.
+    For Confluence use query_knowledge_files with a natural-language query, not a regex.
 
     :param pattern: The text pattern to search for (regex auto-detected)
     :param file_id: Optional file ID to search within a single file only
@@ -2655,6 +2657,7 @@ async def grep_knowledge_files(
 
         # Collect files to search
         files_to_search = []
+        external_knowledge_ids = []
 
         if file_id:
             # Single file mode — verify access
@@ -2693,6 +2696,9 @@ async def grep_knowledge_files(
                         )
                     ):
                         continue
+                    if (knowledge.meta or {}).get('source') == 'external':
+                        external_knowledge_ids.append(knowledge.id)
+                        continue
                     kb_files = await Knowledges.get_files_by_id(item_id)
                     if kb_files:
                         for f in kb_files:
@@ -2713,6 +2719,9 @@ async def grep_knowledge_files(
             )
             seen_ids = set()
             for kb in result.items:
+                if (kb.meta or {}).get('source') == 'external':
+                    external_knowledge_ids.append(kb.id)
+                    continue
                 file_ids = []
                 # Get files attached to this KB
                 files_from_kb = await Knowledges.get_files_by_id(kb.id)
@@ -2725,10 +2734,21 @@ async def grep_knowledge_files(
                             files_to_search.append(file)
                             seen_ids.add(fid)
 
+        external_notice = (
+            'External knowledge bases were not searched. Use query_knowledge_files with a natural-language query '
+            '(not a regex) for their content; no conclusion about Confluence matches can be drawn from this result.'
+        )
         if not files_to_search:
+            if external_knowledge_ids:
+                return JSONCodec.dumps({'error': external_notice, 'knowledge_ids': external_knowledge_ids})
             return JSONCodec.dumps({'error': 'No accessible files found'})
 
-        return await asyncio.to_thread(_grep_file_models, files_to_search, pattern, case_insensitive, count_only)
+        result = await asyncio.to_thread(_grep_file_models, files_to_search, pattern, case_insensitive, count_only)
+        if external_knowledge_ids:
+            return JSONCodec.dumps(
+                {'local_results': result, 'notice': external_notice, 'knowledge_ids': external_knowledge_ids}
+            )
+        return result
 
     except Exception as e:
         log.exception(f'grep_knowledge_files error: {e}')
@@ -3147,7 +3167,9 @@ async def query_knowledge_files(
     """
     Search knowledge base files using semantic/vector search. Searches across collections (KBs),
     individual files, and notes that the user has access to.
-    Helpful for internal documentation, uploaded knowledge, and attached model knowledge.
+    Searches external Confluence knowledge as well as local files. Use this tool for questions
+    about Confluence pages, people, teams, and projects; grep_knowledge_files only searches local files.
+    External results include page URLs and titles for citations.
 
     :param query: The search query to find semantically relevant content
     :param knowledge_ids: Optional list of KB ids to limit search to specific knowledge bases

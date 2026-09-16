@@ -43,6 +43,7 @@ from open_webui.env import (
     RAG_SYSTEM_CONTEXT,
 )
 from open_webui.events import EVENTS, publish_event
+from open_webui.integrations.confluence.runtime import get_awg_request_state
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
@@ -472,6 +473,11 @@ def get_citation_source_from_tool_result(
                 note_id = chunk.get('note_id', '')
                 chunk_type = chunk.get('type', 'file')
                 content = chunk.get('content', '')
+                citation_fields = {
+                    field: chunk[field]
+                    for field in ('title', 'url', 'page_id', 'version', 'space', 'hash', 'knowledge_id')
+                    if chunk.get(field) is not None
+                }
 
                 # Use file_id or note_id as the key
                 key = file_id or note_id or source_name
@@ -482,6 +488,7 @@ def get_citation_source_from_tool_result(
                             'id': file_id or note_id,
                             'name': source_name,
                             'type': chunk_type,
+                            **citation_fields,
                         },
                         'document': [],
                         'metadata': [],
@@ -490,9 +497,10 @@ def get_citation_source_from_tool_result(
                 sources_by_file[key]['document'].append(content)
                 sources_by_file[key]['metadata'].append(
                     {
-                        'file_id': file_id,
+                        **({'file_id': file_id} if chunk_type != 'external' else {}),
                         'name': source_name,
                         'source': source_name,
+                        **citation_fields,
                         **({'note_id': note_id} if note_id else {}),
                     }
                 )
@@ -2675,6 +2683,19 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     features = form_data.pop('features', None) or {}
     extra_params['__features__'] = features
+    is_awg_request, _ = get_awg_request_state(request, model, metadata)
+    if is_awg_request:
+        if await Config.get('memories.system_context.enable'):
+            form_data = await add_memory_context(request, form_data, user, model)
+    elif features.get('memory') and await Config.get('memories.system_context.enable'):
+        # features is client-supplied; re-check the permission the native FC path enforces.
+        if getattr(user, 'role', None) == 'admin' or await has_permission(
+            getattr(user, 'id', ''),
+            'features.memories',
+            await Config.get('user.permissions'),
+        ):
+            form_data = await add_memory_context(request, form_data, user, model)
+
     if features:
         if 'voice' in features and features['voice']:
             if await Config.get('task.voice.prompt.enable'):
@@ -2686,15 +2707,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     template,
                     form_data['messages'],
                 )
-
-        if 'memory' in features and features['memory'] and await Config.get('memories.system_context.enable'):
-            # features is client-supplied; re-check the permission the native FC path enforces.
-            if getattr(user, 'role', None) == 'admin' or await has_permission(
-                getattr(user, 'id', ''),
-                'features.memories',
-                await Config.get('user.permissions'),
-            ):
-                form_data = await add_memory_context(request, form_data, user, model)
 
         if 'web_search' in features and features['web_search'] and await Config.get('web.search.enable'):
             # features is client-supplied; re-check the permission the native FC path enforces.
