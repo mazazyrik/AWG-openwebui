@@ -104,6 +104,10 @@ PROJECT_COLLECTION_TITLE_RE = re.compile(
     r')',
     re.IGNORECASE,
 )
+PROJECT_COLLECTION_SHAPED_TITLE_RE = re.compile(
+    r'[A-ZА-ЯЁ0-9][A-Za-zА-Яа-яЁё0-9&+./\'()—–-]*\s+'
+    r'(?i:проекты|кейсы|клиенты|projects|cases|clients)'
+)
 PROJECT_LABELED_LINE_RE = re.compile(
     r'(?:[-*+] |[1-9]\d?[.)] )?'
     r'(?:проект|кейс|клиент|project|case|client)\s*(?::|：|—|–|-)\s*(?P<name>.+)',
@@ -690,6 +694,28 @@ def _project_candidates(text: str, *, allow_plain_bullets: bool = False):
                 yield match['name'], True, 'line'
 
 
+def _is_trusted_project_collection_source(title: object, text: str) -> bool:
+    if not isinstance(title, str):
+        return False
+    normalized_title = title.strip()
+    if PROJECT_COLLECTION_TITLE_RE.fullmatch(normalized_title) is not None:
+        return True
+    if PROJECT_COLLECTION_SHAPED_TITLE_RE.fullmatch(normalized_title) is None:
+        return False
+    names = set()
+    for raw_line in text[:8000].splitlines():
+        match = PROJECT_LIST_ITEM_RE.fullmatch(raw_line.strip())
+        if match is None:
+            continue
+        name = _literal_project_name(match['name'], section_item=True)
+        if name is None:
+            continue
+        names.add(name.casefold())
+        if len(names) >= 5:
+            return True
+    return False
+
+
 def _split_markdown_table_row(line: str) -> list[str] | None:
     value = line.strip()
     if '|' not in value or '\\|' in value or '<' in value or '>' in value:
@@ -780,10 +806,7 @@ def _collect_project_entries(
         text = source.get('text')
         if not isinstance(text, str):
             continue
-        title = source.get('title')
-        allow_plain_bullets = (
-            isinstance(title, str) and PROJECT_COLLECTION_TITLE_RE.fullmatch(title.strip()) is not None
-        )
+        allow_plain_bullets = _is_trusted_project_collection_source(source.get('title'), text)
         candidates = list(_project_candidates(text, allow_plain_bullets=allow_plain_bullets))
         table_values, source_tables_seen, source_table_rejected = _project_table_candidates(text)
         candidates.extend(table_values)
