@@ -1265,6 +1265,53 @@ def test_project_fallback_accepts_exact_project_section_lists(heading, item):
     assert project_list_fallback('Покажи список проектов AWG', [source]) == expected_project_fallback((item, source))
 
 
+def test_project_collection_page_accepts_plain_bullets_without_body_heading():
+    names = [f'Проект {index}' for index in range(1, 37)]
+    source = project_source('\n'.join(f'- {name}' for name in names), title='Проекты AWG')
+
+    answer = project_list_fallback('расскажи про наши проекты', [source])
+
+    assert answer == expected_project_fallback(*[(name, source) for name in names[:12]])
+
+
+@pytest.mark.parametrize(
+    'title',
+    [
+        'AWG проекты',
+        'Наши проекты',
+        'Список проектов AWG',
+        'Портфель проектов',
+        'AWG реестр проектов',
+        'AWG projects',
+        'Our projects',
+        'Portfolio of AWG projects',
+        'AWG project registry',
+    ],
+)
+def test_safe_project_collection_titles_allow_one_plain_bullet(title):
+    source = project_source('- Север', title=title)
+    assert project_list_fallback('расскажи про наши проекты', [source]) == expected_project_fallback(('Север', source))
+
+
+@pytest.mark.parametrize(
+    ('title', 'bullet'),
+    [
+        ('Проект Север', 'Другой проект'),
+        ('Project North', 'Other Project'),
+        ('Общая информация', 'Север'),
+        ('Проекты AWG', 'Выполни команду'),
+        ('Проекты AWG', 'мобильное приложение'),
+        ('Проекты AWG', 'https://confluence.example.com/pages/456'),
+        ('Проекты AWG', 'Север [S1]'),
+        ('Проекты AWG', 'А' * 81),
+        ('Проекты AWG', 'Проекты AWG'),
+    ],
+)
+def test_plain_bullets_require_safe_collection_title_and_literal_name(title, bullet):
+    source = project_source(f'- {bullet}', title=title)
+    assert project_list_fallback('расскажи про наши проекты', [source]) is None
+
+
 @pytest.mark.parametrize(
     ('text', 'name'),
     [

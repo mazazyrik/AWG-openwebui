@@ -91,6 +91,19 @@ PROJECT_SECTION_RE = re.compile(
     r'(?::|：)?',
     re.IGNORECASE,
 )
+PROJECT_COLLECTION_TITLE_RE = re.compile(
+    r'(?:'
+    r'(?:наши\s+)?(?:проекты|кейсы|клиенты)(?:\s+AWG)?'
+    r'|AWG\s+(?:проекты|кейсы|клиенты)'
+    r'|(?:список|реестр|портфель)\s+(?:проектов|кейсов|клиентов)(?:\s+AWG)?'
+    r'|AWG\s+(?:список|реестр|портфель)\s+(?:проектов|кейсов|клиентов)'
+    r'|(?:our\s+)?(?:projects|cases|clients)(?:\s+(?:of\s+)?AWG)?'
+    r'|AWG\s+(?:projects|cases|clients)'
+    r'|(?:list|registry|portfolio)\s+of\s+(?:AWG\s+|our\s+)?(?:projects|cases|clients)'
+    r'|AWG\s+(?:project|case|client)\s+(?:list|registry|portfolio)'
+    r')',
+    re.IGNORECASE,
+)
 PROJECT_LABELED_LINE_RE = re.compile(
     r'(?:[-*+] |[1-9]\d?[.)] )?'
     r'(?:проект|кейс|клиент|project|case|client)\s*(?::|：|—|–|-)\s*(?P<name>.+)',
@@ -649,7 +662,7 @@ def _literal_project_name(
     return name
 
 
-def _project_candidates(text: str):
+def _project_candidates(text: str, *, allow_plain_bullets: bool = False):
     in_project_section = False
     section_lines = 0
     for raw_line in text[:8000].splitlines():
@@ -667,6 +680,11 @@ def _project_candidates(text: str):
             yield match['name'], False, 'line'
             continue
         if in_project_section:
+            match = PROJECT_LIST_ITEM_RE.fullmatch(line)
+            if match is not None:
+                yield match['name'], True, 'line'
+                continue
+        if allow_plain_bullets:
             match = PROJECT_LIST_ITEM_RE.fullmatch(line)
             if match is not None:
                 yield match['name'], True, 'line'
@@ -762,7 +780,11 @@ def _collect_project_entries(
         text = source.get('text')
         if not isinstance(text, str):
             continue
-        candidates = list(_project_candidates(text))
+        title = source.get('title')
+        allow_plain_bullets = (
+            isinstance(title, str) and PROJECT_COLLECTION_TITLE_RE.fullmatch(title.strip()) is not None
+        )
+        candidates = list(_project_candidates(text, allow_plain_bullets=allow_plain_bullets))
         table_values, source_tables_seen, source_table_rejected = _project_table_candidates(text)
         candidates.extend(table_values)
         tables_seen += source_tables_seen
