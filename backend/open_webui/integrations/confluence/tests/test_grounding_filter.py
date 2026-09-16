@@ -762,6 +762,65 @@ def test_cyrillic_project_query_is_canonical_and_project_oriented():
     assert all('AVG' not in query and 'авг' not in query.casefold() for query in queries)
 
 
+def test_screenshot_project_overview_uses_broad_awg_query():
+    question = 'расскажи про наши проекты'
+    decision = route_request(messages(question))
+    queries = lookup_queries(messages(question))
+
+    assert decision.route == 'confluence_grounded'
+    assert decision.scope_decision == 'awg_possessive_intent'
+    assert queries[0] == 'AWG проекты клиенты кейсы'
+
+
+@pytest.mark.parametrize('question', ['кто такие мы', 'что мы делаем?', 'чем мы занимаемся?', 'what do we do?'])
+def test_bounded_first_person_company_questions_use_approved_profile(question):
+    assert route_request(messages(question)).route == 'corporate_profile'
+
+
+@pytest.mark.parametrize('question', ['мы любим пиццу', 'we need a dinner recipe'])
+def test_unrelated_first_person_questions_stay_out_of_scope(question):
+    assert route_request(messages(question)).route == 'out_of_scope'
+
+
+@pytest.mark.parametrize('question', ['what projects do we have?', 'Какие проекты мы делаем?'])
+def test_first_person_project_questions_use_grounded_broad_search(question):
+    assert route_request(messages(question)).route == 'confluence_grounded'
+    assert lookup_queries(messages(question))[0] == 'AWG проекты клиенты кейсы'
+
+
+@pytest.mark.parametrize('question', ['Какие наши кейсы?', 'What are our cases?'])
+def test_possessive_case_questions_use_grounded_broad_search(question):
+    assert route_request(messages(question)).route == 'confluence_grounded'
+    assert lookup_queries(messages(question))[0] == 'AWG проекты клиенты кейсы'
+
+
+def test_internal_yandex_possessive_stays_grounded():
+    decision = route_request(
+        messages('Расскажи про наш проект Яндекс'),
+        approved_aliases=('Яндекс', 'YANDEX'),
+    )
+    assert (decision.route, decision.scope_decision) == ('confluence_grounded', 'awg_possessive_intent')
+
+
+def test_yandex_follow_up_after_awg_anchor_stays_grounded():
+    decision = route_request(
+        messages('Расскажи про AWG', 'А кто разработчик в Яндексе?'),
+        approved_aliases=('Яндекс', 'YANDEX'),
+    )
+    assert (decision.route, decision.scope_decision) == (
+        'confluence_grounded',
+        'confirmed_awg_continuation',
+    )
+
+
+def test_explicit_external_yandex_first_person_question_stays_out_of_scope():
+    decision = route_request(
+        messages('мы обсуждаем Яндекс: какие проекты делает Яндекс?'),
+        approved_aliases=('Яндекс', 'YANDEX'),
+    )
+    assert decision.route == 'out_of_scope'
+
+
 def test_profile_and_prompt_use_official_awg_name():
     profile = load_awg_profile()
     prompt = render_system_prompt(profile)
@@ -771,6 +830,11 @@ def test_profile_and_prompt_use_official_awg_name():
     assert 'Ты — AWG GPT' in prompt
     assert profile.approved_context
     assert all(fact.source_url.startswith('https://www.awg.ru/') for fact in profile.approved_context)
+    assert 'помогает сотрудникам находить подтверждённые рабочие сведения' in profile.role
+    assert 'Твоя цель — помогать сотрудникам AWG' in prompt
+    assert '«мы», «у нас», «наш», «наша», «наши»' in prompt
+    assert 'только по источникам Confluence' in prompt
+    assert all(project not in prompt for project in ('YANDEX', 'Mindbox', 'Север'))
 
 
 @pytest.mark.parametrize('method', ['inlet', 'request', 'outlet'])
@@ -998,6 +1062,24 @@ def test_typed_finalizer_distinguishes_grounded_fact_partial_and_rejected_conten
     assert (rejected.text, rejected.response_kind) == (CITATION_FAILURE, 'grounded_no_evidence')
 
 
+def test_malformed_citation_and_no_evidence_responses_do_not_request_a_url():
+    second = {**SOURCE, 'id': 'S2', 'page_id': '456', 'url': 'https://confluence.example.com/p/456'}
+    state = Filter()._state(
+        RouteDecision('confluence_grounded', 'test'),
+        model_id=MODEL['id'],
+        invocation_id='invocation',
+        filter_id=FILTER_ID,
+        client_stream=False,
+        sources=[SOURCE, second],
+    )
+
+    assert finalize_awg_answer(state, f'Факт [S1] {second["url"]}') == CITATION_FAILURE
+    assert 'ссылк' not in CITATION_FAILURE.casefold()
+    assert 'ссылк' not in UNKNOWN.casefold()
+    assert 'Confluence' in CITATION_FAILURE
+    assert 'Confluence' in UNKNOWN
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('stream', [False, True])
 async def test_grounded_partial_keeps_content_output_and_response_contract_in_sync(stream):
@@ -1041,6 +1123,36 @@ def project_source(text, *, source_id='S1', page_id='123', title='Обзор'):
         'url': f'https://confluence.example.com/pages/viewpage.action?pageId={page_id}',
         'text': text,
     }
+
+
+def expected_project_fallback(*entries):
+    project_lines = '\n'.join(f'- {name} [{source["id"]}] {source["url"]}' for name, source in entries)
+    cited_sources = list({source['id']: source for _, source in entries}.values())
+    coverage = ' '.join(f'[{source["id"]}] {source["url"]}' for source in cited_sources)
+    return f'{project_lines}\n\nСписок может быть неполным. {coverage}'
+
+
+@pytest.mark.asyncio
+async def test_screenshot_project_overview_inlet_builds_redacted_literal_fallback():
+    instance = Filter()
+    source = project_source('# Проекты\n- Север\n- Мобильное приложение')
+    instance._grounded_sources = AsyncMock(return_value=([source], False, None))
+    request = SimpleNamespace(state=SimpleNamespace())
+    body = {'tools': [{'name': 'unsafe-client-tool'}], 'messages': messages('расскажи про наши проекты')}
+
+    result = await attached_inlet(instance, body, request)
+
+    queries = instance._grounded_sources.await_args.args[0]
+    state = next(iter(getattr(request.state, STATE_KEY).states.values()))
+    assert queries[0] == 'AWG проекты клиенты кейсы'
+    assert 'tools' not in result
+    assert result['tool_choice'] == 'none'
+    assert state.grounded_fallback == expected_project_fallback(
+        ('Север', source),
+        ('Мобильное приложение', source),
+    )
+    assert state.sources == ({'id': 'S1', 'page_id': '123', 'title': 'Обзор', 'url': source['url']},)
+    assert all('text' not in item and 'relevant_excerpt' not in item for item in state.sources)
 
 
 def test_literal_fallback_renders_project_scoped_person_role_status_and_document_facts():
@@ -1135,7 +1247,7 @@ def test_project_scoped_role_status_and_document_never_become_awg_wide_claims():
 )
 def test_project_fallback_accepts_explicit_labeled_source_entries(text, name):
     source = project_source(text)
-    assert project_list_fallback('Какие проекты делает AWG?', [source]) == f'- {name} [S1] {source["url"]}'
+    assert project_list_fallback('Какие проекты делает AWG?', [source]) == expected_project_fallback((name, source))
 
 
 @pytest.mark.parametrize(
@@ -1150,7 +1262,7 @@ def test_project_fallback_accepts_explicit_labeled_source_entries(text, name):
 )
 def test_project_fallback_accepts_exact_project_section_lists(heading, item):
     source = project_source(f'{heading}\n- {item}')
-    assert project_list_fallback('Покажи список проектов AWG', [source]) == f'- {item} [S1] {source["url"]}'
+    assert project_list_fallback('Покажи список проектов AWG', [source]) == expected_project_fallback((item, source))
 
 
 @pytest.mark.parametrize(
@@ -1165,7 +1277,7 @@ def test_project_fallback_accepts_exact_project_section_lists(heading, item):
 )
 def test_project_fallback_normalizes_one_balanced_outer_quote_pair(text, name):
     source = project_source(text)
-    assert project_list_fallback('Какие проекты делает AWG?', [source]) == f'- {name} [S1] {source["url"]}'
+    assert project_list_fallback('Какие проекты делает AWG?', [source]) == expected_project_fallback((name, source))
 
 
 @pytest.mark.parametrize(
@@ -1199,15 +1311,22 @@ def test_project_fallback_never_uses_page_title_without_literal_text_signal():
     assert project_list_fallback('Какие проекты делает AWG?', [source]) is None
 
 
+@pytest.mark.parametrize('question', ['расскажи про проект Север', 'tell me about project North'])
+def test_singular_project_overview_does_not_activate_list_fallback(question):
+    mismatching_source = project_source('Проект: Другой проект')
+    assert project_list_fallback(question, [mismatching_source]) is None
+
+
 def test_project_fallback_is_bounded_deduplicated_and_fully_cited():
     lines = ['Проект: Север', 'Проект: север'] + [f'Проект: Проект {index}' for index in range(1, 14)]
     source = project_source('\n'.join(lines))
     answer = project_list_fallback('Перечисли проекты AWG', [source])
     assert answer is not None
-    items = answer.splitlines()
+    items = answer.split('\n\n', 1)[0].splitlines()
     assert len(items) == 12
     assert items[0] == f'- Север [S1] {source["url"]}'
     assert all(item.count('[S1]') == 1 and item.count(source['url']) == 1 for item in items)
+    assert answer.endswith(f'Список может быть неполным. [S1] {source["url"]}')
 
 
 def test_project_fallback_reads_at_most_four_sources_and_8000_chars_each():
@@ -1230,8 +1349,8 @@ def test_project_fallback_reads_at_most_four_sources_and_8000_chars_each():
 def test_project_fallback_enforces_literal_name_length_boundary():
     accepted = 'А' * 80
     accepted_source = project_source(f'Проект: {accepted}')
-    assert project_list_fallback('Какие проекты делает AWG?', [accepted_source]) == (
-        f'- {accepted} [S1] {accepted_source["url"]}'
+    assert project_list_fallback('Какие проекты делает AWG?', [accepted_source]) == expected_project_fallback(
+        (accepted, accepted_source)
     )
     assert project_list_fallback('Какие проекты делает AWG?', [project_source(f'Проект: {"А" * 81}')]) is None
 
@@ -1242,7 +1361,7 @@ def test_project_fallback_enforces_literal_name_length_boundary():
 )
 def test_project_fallback_accepts_exact_markdown_table_category_headers(header):
     source = project_source(f'| {header} | Статус |\n| --- | :---: |\n| Север | Активен |')
-    assert project_list_fallback('Какие проекты делает AWG?', [source]) == f'- Север [S1] {source["url"]}'
+    assert project_list_fallback('Какие проекты делает AWG?', [source]) == expected_project_fallback(('Север', source))
 
 
 @pytest.mark.parametrize(
@@ -1256,7 +1375,7 @@ def test_project_fallback_accepts_exact_markdown_table_category_headers(header):
 )
 def test_project_fallback_accepts_safe_markdown_table_target_values(value, name):
     source = project_source(f'| Проект | Статус |\n| --- | --- |\n| {value} | Активен |')
-    assert project_list_fallback('Какие проекты делает AWG?', [source]) == f'- {name} [S1] {source["url"]}'
+    assert project_list_fallback('Какие проекты делает AWG?', [source]) == expected_project_fallback((name, source))
 
 
 def test_project_fallback_bounds_and_deduplicates_markdown_table_rows():
@@ -1264,10 +1383,11 @@ def test_project_fallback_bounds_and_deduplicates_markdown_table_rows():
     source = project_source('| Проект | Статус |\n| --- | --- |\n' + '\n'.join(rows))
     answer = project_list_fallback('Перечисли проекты AWG', [source])
     assert answer is not None
-    items = answer.splitlines()
+    items = answer.split('\n\n', 1)[0].splitlines()
     assert len(items) == 12
     assert items[0] == f'- Север [S1] {source["url"]}'
     assert all(item.count('[S1]') == 1 and item.count(source['url']) == 1 for item in items)
+    assert answer.endswith(f'Список может быть неполным. [S1] {source["url"]}')
 
 
 @pytest.mark.parametrize(
@@ -1343,7 +1463,7 @@ async def test_markdown_table_fallback_state_contains_no_source_text(monkeypatch
     await attached_inlet(instance, {'messages': messages('какие проекты делает авг')}, request)
 
     state = next(iter(getattr(request.state, STATE_KEY).states.values()))
-    assert state.grounded_fallback == f'- Север [S1] {source["url"]}'
+    assert state.grounded_fallback == expected_project_fallback(('Север', source))
     assert all('text' not in item and 'relevant_excerpt' not in item for item in state.sources)
 
 
@@ -1433,7 +1553,10 @@ async def test_project_lookup_hydration_builds_fallback_without_source_text_in_s
     await attached_inlet(instance, {'messages': messages('какие проекты делает авг')}, request)
 
     state = next(iter(getattr(request.state, STATE_KEY).states.values()))
-    assert state.grounded_fallback == (f'- Север [S1] {hydrated["url"]}\n- Мобильное приложение [S1] {hydrated["url"]}')
+    assert state.grounded_fallback == expected_project_fallback(
+        ('Север', hydrated),
+        ('Мобильное приложение', hydrated),
+    )
     assert state.sources == ({'id': 'S1', 'page_id': '123', 'title': 'Обзор', 'url': hydrated['url']},)
     assert all('text' not in source and 'relevant_excerpt' not in source for source in state.sources)
 

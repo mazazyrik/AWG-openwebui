@@ -20,6 +20,7 @@ from open_webui.integrations.confluence.identity import (
     prompt_sha256,
     render_system_prompt,
 )
+from open_webui.integrations.confluence.response_text import UNKNOWN
 from open_webui.integrations.confluence.runtime import (
     ROUTE_RESPONSE_KINDS,
     STATE_KEY,
@@ -32,6 +33,8 @@ from open_webui.integrations.confluence.runtime import (
     set_awg_request_state,
 )
 from open_webui.integrations.confluence.scope_router import (
+    CORPORATE_FIRST_PERSON_RE,
+    CORPORATE_POSSESSIVE_RE,
     RouteDecision,
     latest_user_text,
     needs_project_clarification,
@@ -53,12 +56,11 @@ ALLOWED_SOURCE_HOST = 'conf.awg.ru'
 MAX_VALIDATED_ANSWER_CHARS = 32_768
 log = logging.getLogger(__name__)
 DEFAULT_PROFILE = load_awg_profile()
-UNKNOWN = 'В найденных материалах не удалось подтвердить ответ. Пришлите ссылку на нужную страницу — проверю её.'
 CLARIFY = DEFAULT_PROFILE.responses['clarification']
 UNAVAILABLE = 'Сейчас не удалось проверить Confluence. Попробуйте ещё раз чуть позже.'
 CITATION_FAILURE = (
     'Не удалось подтвердить ответ по найденным материалам. '
-    'Можно уточнить вопрос или прислать ссылку на нужную страницу.'
+    'Уточните проект, клиента, команду или предмет вопроса — сервер повторно проверит Confluence.'
 )
 SAFE_RESPONSES = {UNKNOWN, CLARIFY}
 REMOVABLE_COVERAGE_LIMITATION = 'Это не полный список компании; принадлежность к её штату здесь не подтверждена.'
@@ -73,7 +75,10 @@ PROJECT_LIST_INTENT_RE = re.compile(
     r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b.*'
     r'\b(?:проект\w*|кейс\w*|клиент\w*|projects?|cases?|clients?)\b'
     r'|\b(?:проект\w*|кейс\w*|клиент\w*|projects?|cases?|clients?)\b.*'
-    r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b',
+    r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b'
+    r'|\b(?:расскажи|обзор|tell|overview)\b.*'
+    r'\b(?:проекты|проектах|проектов|проектами|кейсы|кейсах|кейсов|кейсами|'
+    r'клиенты|клиентах|клиентов|клиентами|projects|cases|clients)\b',
     re.IGNORECASE,
 )
 PROJECT_SECTION_RE = re.compile(
@@ -320,7 +325,11 @@ def lookup_queries(messages: list[dict], expansions: tuple[str, ...] = ()) -> li
         re.search(r'\b(?:проект\w*|клиент\w*|кейс\w*|projects?|clients?|cases?)\b', normalized, re.IGNORECASE)
     )
     queries = []
-    if project_query and re.search(r'\bAWG\b', normalized, re.IGNORECASE):
+    if project_query and (
+        re.search(r'\bAWG\b', normalized, re.IGNORECASE)
+        or CORPORATE_POSSESSIVE_RE.search(normalized)
+        or CORPORATE_FIRST_PERSON_RE.search(normalized)
+    ):
         queries.append('AWG проекты клиенты кейсы')
     queries.append(normalized)
     if re.search(r'\b(Яндекс|YANDEX)\b', normalized, re.IGNORECASE):
@@ -803,7 +812,10 @@ def _project_list_fallback(
             diagnostics['table_scan'] = 'rejected'
     if not entries:
         return None, diagnostics
-    candidate = '\n'.join(f'- {name} [{source["id"]}] {source["url"]}' for name, source in entries)
+    project_lines = '\n'.join(f'- {name} [{source["id"]}] {source["url"]}' for name, source in entries)
+    cited_sources = list({source['id']: source for _, source in entries}.values())
+    coverage_references = ' '.join(f'[{source["id"]}] {source["url"]}' for source in cited_sources)
+    candidate = f'{project_lines}\n\nСписок может быть неполным. {coverage_references}'
     validated = grounded_answer(candidate, sources)
     if validated == CITATION_FAILURE:
         return None, diagnostics
