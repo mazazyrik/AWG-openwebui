@@ -40,15 +40,36 @@ TEMPLATE_FIELDS = {
 }
 INSTRUCTION_PATTERNS = (
     re.compile(
-        r'(?:ignore|disregard|override).{0,40}(?:instructions?|rules?|prompt)',
+        r'(?:ignore|disregard|override|rewrite|replace).{0,40}(?:instructions?|rules?|prompt)',
         re.IGNORECASE,
     ),
     re.compile(
-        r'(?:игнорируй|забудь|переопредели|смени).{0,40}(?:инструкц\w*|правил\w*|роль|промпт)',
+        r'\bbypass\s+(?:(?:all|any|every|the)\s+)?'
+        r'(?:instructions?|rules?|polic(?:y|ies)|guardrails?|prompts?)\b|'
+        r"\bpretend\s+(?:that\s+)?you(?:'re|\s+are)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'(?:игнорируй|забудь|переопредели|смени|перепиш\w*|замени).{0,40}'
+        r'(?:инструкц\w*|правил\w*|роль|промпт)',
         re.IGNORECASE,
     ),
     re.compile(r'<\/?(?:system|assistant|user)>', re.IGNORECASE),
     re.compile(r'\b(?:SOURCE_DATA_JSON|FINAL_ROUTE|AWG_GPT_POLICY)\b', re.IGNORECASE),
+    re.compile(
+        r'\b(?:добавь|добавьте|нажми|нажмите|удали|удалите|открой|откройте|выполни|выполните|'
+        r'запусти|запустите|отправь|отправьте|покажи|покажите|выдай|выдайте|назначь|назначьте|'
+        r'сделай)\b',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'\b(?:add|delete|execute|run|send|show|assign|make)\s+'
+        r'(?:me|the|this|that|a|an|user|account|admin|administrator|role|request|command)\b|'
+        r'\b(?:click|press)\s+(?:here|the|this|that|a|an|button|link)\b|'
+        r'\bopen\s+(?:the|this|that|a|an|link|url|file)\b|'
+        r'\bgrant\s+(?:me|the|this|that|user|account|access|permission|role|admin)\b',
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -83,6 +104,11 @@ class AwgProfile:
     responses: dict[str, str]
 
 
+def contains_untrusted_instruction(value: str) -> bool:
+    """Detect bounded policy and action instructions in untrusted text."""
+    return any(pattern.search(value) for pattern in INSTRUCTION_PATTERNS)
+
+
 def _require_keys(value: dict[str, Any], expected: set[str], location: str) -> None:
     actual = set(value)
     if actual != expected:
@@ -103,7 +129,7 @@ def _require_text(value: object, location: str, *, max_chars: int = 2000) -> str
     text = value.strip()
     if len(text) > max_chars or '\x00' in text:
         raise ValueError(f'AWG profile field {location} is invalid')
-    if any(pattern.search(text) for pattern in INSTRUCTION_PATTERNS):
+    if contains_untrusted_instruction(text):
         raise ValueError(f'AWG profile field {location} contains policy-like instructions')
     return text
 
