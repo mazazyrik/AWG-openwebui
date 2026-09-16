@@ -39,7 +39,6 @@ def test_partial_corpus_distinguishes_roster_from_count_and_registry_questions()
         assert expected['source_ids']
         assert not calibration.evaluate(UNKNOWN, expected, partial[case_id]['lookup']['results'], 'unknown')['passed']
 
-
     count_case = partial['partial-4']
     expected = count_case['expected']
     assert expected['kind'] == 'safe_unknown'
@@ -216,7 +215,7 @@ class Filter:
                 {
                     'id': 'one',
                     'family': 'people',
-                    'messages': [{'role': 'user', 'content': 'Who?'}],
+                    'messages': [{'role': 'user', 'content': 'Who works on the AWG project?'}],
                     'lookup': payload,
                     'expected': {'kind': 'answer', 'facts': ['Person'], 'forbidden': [], 'source_ids': ['S1']},
                 }
@@ -302,7 +301,11 @@ def test_qualified_unknown_requires_unknown_total_and_rejects_numeric_claims(tex
 def test_safe_unknown_rejects_registry_claims_even_with_uncertainty(claim):
     source = {'url': 'https://confluence.example.com/p/900001'}
     expected = {
-        'kind': 'safe_unknown', 'subject': 'registry', 'facts': [], 'forbidden': [], 'source_ids': ['S1'],
+        'kind': 'safe_unknown',
+        'subject': 'registry',
+        'facts': [],
+        'forbidden': [],
+        'source_ids': ['S1'],
         'unsafe_claims': ['реестр существует', 'реестра не существует', 'реестр отсутствует'],
     }
     answer = f'Источник не подтверждает наличие реестра. Но {claim}. [S1] {source["url"]}'
@@ -329,7 +332,11 @@ def test_safe_unknown_registry_answer_requires_real_citation():
 def test_safe_unknown_rejects_uncontrolled_unknown_and_wrong_subject(subject, text, kind):
     source = {'url': 'https://confluence.example.com/p/900001'}
     expected = {
-        'kind': 'safe_unknown', 'subject': subject, 'facts': [], 'forbidden': [], 'source_ids': ['S1'],
+        'kind': 'safe_unknown',
+        'subject': subject,
+        'facts': [],
+        'forbidden': [],
+        'source_ids': ['S1'],
     }
     answer = text if kind == 'unknown' else f'{text} [S1] {source["url"]}'
     assert not calibration.evaluate(answer, expected, [source], kind)['passed']

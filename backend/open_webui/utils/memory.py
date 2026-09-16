@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from typing import Any
 
 from fastapi import HTTPException
+from open_webui.config import RAG_EMBEDDING_CONTENT_PREFIX
+from open_webui.integrations.confluence.runtime import get_awg_request_state
+from open_webui.integrations.confluence.scope_router import MemoryCommand
 from open_webui.models.config import Config
-from open_webui.models.memories import Memories
+from open_webui.models.memories import Memories, MemoryModel
+from open_webui.models.users import UserModel
+from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
+from open_webui.utils.access_control import has_permission
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import add_or_update_system_message, get_content_from_message
 
@@ -15,6 +22,36 @@ log = logging.getLogger(__name__)
 
 MEMORY_CONTEXT_OPEN = '<memory_context>'
 MEMORY_CONTEXT_CLOSE = '</memory_context>'
+AWG_PREFERENCES_OPEN = '<personal_preferences source="awg_gpt_memory">'
+AWG_PREFERENCES_CLOSE = '</personal_preferences>'
+AWG_MEMORY_PATH = 'awg-gpt'
+AWG_MEMORY_COLLECTION_PREFIX = 'user-memory-awg-gpt'
+AWG_MEMORY_MAX_VALUE_CHARS = 300
+AWG_MEMORY_SECRET_RE = re.compile(
+    r'\b(?:password|парол\w*|secret|секрет\w*|api[-_ ]?key|токен\w*|bearer|private[-_ ]?key)\b|'
+    r'\bsk-[A-Za-z0-9_-]{12,}\b|\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]+PRIVATE KEY-----',
+    re.IGNORECASE,
+)
+AWG_MEMORY_POLICY_RE = re.compile(
+    r'\b(?:ignore|override|disregard).{0,40}(?:instruction|rule|prompt)|'
+    r'\b(?:игнорируй|переопредели|забудь).{0,40}(?:инструкц\w*|правил\w*|промпт)|'
+    r'\b(?:выдай|дай|назначь|сделай)\b.{0,40}'
+    r'\b(?:админ\w*|администратор\w*|роль\w*|прав\w*|доступ\w*|разрешени\w*)\b|'
+    r'\b(?:роль\w*|прав\w*|доступ\w*|разрешени\w*)\b.{0,30}'
+    r'\b(?:админ\w*|администратор\w*)\b|'
+    r'\b(?:grant|give|make|assign)\b.{0,40}'
+    r'\b(?:admin(?:istrator)?|role|permissions?|access)\b|'
+    r'\b(?:admin(?:istrator)?|system)\s+(?:role|permissions?|access|prompt)\b|'
+    r'\b(?:SOURCE_DATA_JSON|FINAL_ROUTE|AWG_GPT_POLICY)\b|<\/?(?:system|assistant|user)>|https?://|\bwww\.',
+    re.IGNORECASE,
+)
+AWG_MEMORY_CORPORATE_RE = re.compile(
+    r'\b(?:директор|ceo|руководитель|сотрудник|штат|оборот|выручка|прибыль|владелец|employee|headcount|revenue)'
+    r'\b.{0,80}\bAWG\b|'
+    r'\bAWG\b.{0,80}\b(?:директор|ceo|руководитель|сотрудник|штат|оборот|выручка|прибыль|владелец|employee|'
+    r'headcount|revenue|основан\w*|founded)\b|\bAWG\b\s*(?:—\s*|(?:это|является|is|was|has|имеет)\b)',
+    re.IGNORECASE,
+)
 
 
 def clean_memory_content(content: str | None) -> str:
@@ -41,6 +78,263 @@ def memory_vector_text(content: str, path: str | None = None) -> str:
 
 def memory_label(memory) -> str:
     return f'{memory.path}: {memory.content}' if memory.path else memory.content
+
+
+async def _check_awg_memory_permission(user: UserModel) -> None:
+    config = await Config.get_many('memories.enable', 'user.permissions')
+    if not config.get('memories.enable'):
+        raise HTTPException(status_code=404, detail='Memory is disabled')
+    if user.role != 'admin' and not await has_permission(user.id, 'features.memories', config.get('user.permissions')):
+        raise HTTPException(status_code=403, detail='Memory access denied')
+
+
+def _validate_awg_memory_value(value: str | None, *, allow_awg_fact: bool = False) -> str:
+    text = clean_memory_content(value)
+    normalized = re.sub(r'\s+', ' ', text).casefold()
+    if len(text) > AWG_MEMORY_MAX_VALUE_CHARS:
+        raise HTTPException(status_code=400, detail='Memory value is too long')
+    if AWG_MEMORY_SECRET_RE.search(normalized) or AWG_MEMORY_POLICY_RE.search(normalized):
+        raise HTTPException(status_code=400, detail='Memory value is not allowed')
+    if not allow_awg_fact and AWG_MEMORY_CORPORATE_RE.search(text):
+        raise HTTPException(status_code=400, detail='Corporate facts cannot be stored as personal memory')
+    return text
+
+
+def _awg_memory_metadata(memory: MemoryModel) -> dict:
+    return {
+        'created_at': memory.created_at,
+        'updated_at': memory.updated_at,
+        'type': memory.type,
+        'path': memory.path,
+    }
+
+
+async def _awg_memory_vector(request, user: UserModel, memory: MemoryModel, vector: list) -> None:
+    await ASYNC_VECTOR_DB_CLIENT.upsert(
+        collection_name=f'{AWG_MEMORY_COLLECTION_PREFIX}-{user.id}',
+        items=[
+            {
+                'id': memory.id,
+                'text': memory_vector_text(memory.content, memory.path),
+                'vector': vector,
+                'metadata': _awg_memory_metadata(memory),
+            }
+        ],
+    )
+
+
+async def _embed_awg_memory(request, user: UserModel, content: str, path: str) -> list:
+    return await request.app.state.EMBEDDING_FUNCTION(
+        memory_vector_text(content, path),
+        prefix=RAG_EMBEDDING_CONTENT_PREFIX,
+        user=user,
+    )
+
+
+def _awg_memory_rows(memories: list[MemoryModel]) -> list[MemoryModel]:
+    return [
+        memory
+        for memory in memories
+        if memory.type == 'user'
+        and isinstance(memory.meta, dict)
+        and memory.meta.get('created_by') == 'awg_gpt_explicit'
+        and memory.meta.get('kind') in {'alias', 'preference'}
+        and isinstance(memory.path, str)
+        and memory.path.startswith(f'{AWG_MEMORY_PATH}/')
+    ]
+
+
+async def _delete_awg_memory(request, user: UserModel, memories: list[MemoryModel], command: MemoryCommand) -> dict:
+    lookup = _validate_awg_memory_value(command.value, allow_awg_fact=True).casefold()
+    selected = next(
+        (
+            memory
+            for memory in memories
+            if lookup
+            in {
+                str(memory.meta.get('alias') or '').casefold(),
+                str(memory.meta.get('value') or '').casefold(),
+                memory.content.casefold(),
+            }
+        ),
+        None,
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail='Memory entry not found')
+    old_vector = await _embed_awg_memory(request, user, selected.content, selected.path or AWG_MEMORY_PATH)
+    await ASYNC_VECTOR_DB_CLIENT.delete(
+        collection_name=f'{AWG_MEMORY_COLLECTION_PREFIX}-{user.id}',
+        ids=[selected.id],
+    )
+    deleted = await Memories.delete_memory_by_id_and_user_id(
+        selected.id,
+        user.id,
+        include_awg_gpt=True,
+    )
+    if not deleted:
+        await _awg_memory_vector(request, user, selected, old_vector)
+        raise HTTPException(status_code=409, detail='Memory delete failed')
+    return {'status': 'deleted', 'kind': selected.meta.get('kind')}
+
+
+async def _save_awg_memory(
+    request,
+    user: UserModel,
+    memories: list[MemoryModel],
+    command: MemoryCommand,
+    reserved_aliases: tuple[str, ...],
+) -> dict:
+    if command.kind not in {'alias', 'preference'} or not command.value:
+        raise HTTPException(status_code=400, detail='Memory command is incomplete')
+
+    value = _validate_awg_memory_value(command.value)
+    alias = _validate_awg_memory_value(command.key) if command.kind == 'alias' else None
+    reserved = {'awg', 'avg', 'авг', 'awg gpt', 'avg gpt', 'авг gpt'} | {
+        item.casefold() for item in reserved_aliases
+    }
+    if alias and alias.casefold() in reserved:
+        raise HTTPException(status_code=400, detail='Reserved aliases cannot be changed')
+    fingerprint = hashlib.sha256((alias or value).casefold().encode('utf-8')).hexdigest()[:16]
+    path = f'{AWG_MEMORY_PATH}/{command.kind}/{fingerprint}'
+    content = (
+        f'AWG project alias: {alias} means {value}'
+        if command.kind == 'alias'
+        else f'AWG GPT response preference: {value}'
+    )
+    meta = {
+        'created_by': 'awg_gpt_explicit',
+        'kind': command.kind,
+        'alias': alias,
+        'value': value,
+    }
+    existing = next(
+        (
+            memory
+            for memory in memories
+            if memory.meta.get('kind') == command.kind
+            and (
+                (
+                    command.kind == 'preference'
+                    and memory.meta.get('value', '').casefold() == value.casefold()
+                )
+                or (
+                    command.kind == 'alias'
+                    and memory.meta.get('alias', '').casefold() == (alias or '').casefold()
+                )
+            )
+        ),
+        None,
+    )
+    vector = await _embed_awg_memory(request, user, content, path)
+    if existing is None:
+        results = await Memories.apply_memory_operations(
+            user.id,
+            [{'action': 'add', 'type': 'user', 'path': path, 'content': content, 'meta': meta}],
+            include_awg_gpt=True,
+        )
+        memory = results[0].get('memory') if results else None
+        if not isinstance(memory, MemoryModel):
+            raise HTTPException(status_code=409, detail='Memory create failed')
+        if results[0].get('status') == 'skipped' and (
+            not isinstance(memory.meta, dict) or memory.meta.get('created_by') != 'awg_gpt_explicit'
+        ):
+            raise HTTPException(status_code=409, detail='Memory path is already in use')
+        try:
+            await _awg_memory_vector(request, user, memory, vector)
+        except Exception:
+            await Memories.delete_memory_by_id_and_user_id(
+                memory.id,
+                user.id,
+                include_awg_gpt=True,
+            )
+            raise
+        return {'status': results[0].get('status'), 'kind': command.kind}
+
+    old_content = existing.content
+    old_path = existing.path or AWG_MEMORY_PATH
+    old_meta = dict(existing.meta or {})
+    old_vector = await _embed_awg_memory(request, user, old_content, old_path)
+    results = await Memories.apply_memory_operations(
+        user.id,
+        [
+            {
+                'action': 'replace',
+                'id': existing.id,
+                'type': 'user',
+                'path': path,
+                'content': content,
+                'meta': meta,
+            }
+        ],
+        include_awg_gpt=True,
+    )
+    memory = results[0].get('memory') if results else None
+    if not isinstance(memory, MemoryModel):
+        raise HTTPException(status_code=409, detail='Memory update failed')
+    try:
+        await _awg_memory_vector(request, user, memory, vector)
+    except Exception:
+        restored = await Memories.apply_memory_operations(
+            user.id,
+            [
+                {
+                    'action': 'replace',
+                    'id': existing.id,
+                    'type': existing.type,
+                    'path': old_path,
+                    'content': old_content,
+                    'meta': old_meta,
+                }
+            ],
+            include_awg_gpt=True,
+        )
+        restored_memory = restored[0].get('memory') if restored else None
+        if isinstance(restored_memory, MemoryModel):
+            await _awg_memory_vector(request, user, restored_memory, old_vector)
+        raise
+    return {'status': 'updated', 'kind': command.kind}
+
+
+async def execute_awg_memory_command(
+    request,
+    user_data: dict,
+    command: MemoryCommand,
+    reserved_aliases: tuple[str, ...] = (),
+) -> dict:
+    """Apply an explicit AWG alias or preference command for the authenticated user."""
+    user = UserModel(**user_data)
+    await _check_awg_memory_permission(user)
+    memories = _awg_memory_rows(
+        await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []
+    )
+    if command.operation == 'list':
+        return {
+            'status': 'read',
+            'aliases': len([memory for memory in memories if memory.meta.get('kind') == 'alias']),
+            'preferences': len([memory for memory in memories if memory.meta.get('kind') == 'preference']),
+        }
+    if command.operation == 'remove':
+        return await _delete_awg_memory(request, user, memories, command)
+    return await _save_awg_memory(request, user, memories, command, reserved_aliases)
+
+
+async def get_awg_alias_expansions(request, user_data: dict, question: str) -> list[str]:
+    """Return validated per-user alias targets found in the current question."""
+    user = UserModel(**user_data)
+    await _check_awg_memory_permission(user)
+    matches = []
+    for memory in _awg_memory_rows(
+        await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []
+    ):
+        if memory.meta.get('kind') != 'alias':
+            continue
+        alias = _validate_awg_memory_value(memory.meta.get('alias'), allow_awg_fact=True)
+        value = _validate_awg_memory_value(memory.meta.get('value'))
+        if re.search(rf'(?<!\w){re.escape(alias)}(?!\w)', question, re.IGNORECASE):
+            matches.append(value)
+        if len(matches) == 3:
+            break
+    return matches
 
 
 def _path_parts(path: str | None) -> list[str]:
@@ -286,7 +580,47 @@ def model_allows_memory(model: dict | None) -> bool:
     return ((model or {}).get('info', {}).get('meta', {}).get('capabilities') or {}).get('memory', True)
 
 
+async def _add_awg_preference_context(form_data: dict, user) -> dict:
+    memories = _awg_memory_rows(
+        await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []
+    )
+    preferences = []
+    for memory in memories:
+        if memory.meta.get('kind') != 'preference':
+            continue
+        try:
+            preferences.append(_validate_awg_memory_value(memory.meta.get('value')))
+        except HTTPException:
+            continue
+    if not preferences:
+        return form_data
+
+    config = await Config.get_many('memories.user_char_limit')
+    try:
+        limit = max(250, int(config.get('memories.user_char_limit') or 2000))
+    except Exception:
+        limit = 2000
+    rendered = '\n'.join(f'- {value}' for value in preferences)[:limit]
+    context = f'{AWG_PREFERENCES_OPEN}\n{rendered}\n{AWG_PREFERENCES_CLOSE}'
+    form_data['messages'] = add_or_update_system_message(context, form_data['messages'], append=True)
+    return form_data
+
+
 async def add_memory_context(request, form_data: dict, user, model: dict | None = None):
+    is_awg_request, awg_state = get_awg_request_state(
+        request,
+        model or {},
+        form_data.get('metadata'),
+    )
+    if is_awg_request:
+        if awg_state is None:
+            return form_data
+        try:
+            await _check_awg_memory_permission(user)
+        except HTTPException:
+            return form_data
+        return await _add_awg_preference_context(form_data, user)
+
     if not model_allows_memory(model):
         return form_data
 
@@ -417,6 +751,9 @@ async def review_memory_after_turn(
     messages: list[dict],
 ) -> None:
     if not model_allows_memory(model):
+        return
+    is_awg_request, _ = get_awg_request_state(request, model or {}, metadata)
+    if is_awg_request:
         return
 
     features = metadata.get('features') or {}

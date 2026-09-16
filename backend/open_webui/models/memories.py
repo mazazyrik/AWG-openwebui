@@ -47,6 +47,10 @@ class MemoriesTable:
     def normalize_memory_type(memory_type: str | None = None) -> str:
         return 'user' if memory_type == 'user' else 'context'
 
+    @staticmethod
+    def is_awg_gpt_memory(memory: Memory | MemoryModel) -> bool:
+        return isinstance(memory.meta, dict) and memory.meta.get('created_by') == 'awg_gpt_explicit'
+
     async def insert_new_memory(
         self,
         user_id: str,
@@ -83,11 +87,16 @@ class MemoriesTable:
         update_path: bool = False,
         meta: dict | None = None,
         db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
     ) -> MemoryModel | None:
         async with get_async_db_context(db) as db:
             try:
                 memory = await db.get(Memory, id)
-                if not memory or memory.user_id != user_id:
+                if (
+                    not memory
+                    or memory.user_id != user_id
+                    or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
+                ):
                     return None
 
                 if content is not None:
@@ -105,36 +114,72 @@ class MemoriesTable:
             except Exception:
                 return None
 
-    async def get_memories(self, db: AsyncSession | None = None) -> list[MemoryModel]:
+    async def get_memories(
+        self,
+        db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
+    ) -> list[MemoryModel]:
         async with get_async_db_context(db) as db:
             try:
                 result = await db.execute(select(Memory))
                 memories = result.scalars().all()
-                return [MemoryModel.model_validate(memory) for memory in memories]
+                rows = [MemoryModel.model_validate(memory) for memory in memories]
+                return (
+                    rows
+                    if include_awg_gpt
+                    else [memory for memory in rows if not self.is_awg_gpt_memory(memory)]
+                )
             except Exception:
                 return None
 
-    async def get_memories_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> list[MemoryModel]:
+    async def get_memories_by_user_id(
+        self,
+        user_id: str,
+        db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
+    ) -> list[MemoryModel]:
         async with get_async_db_context(db) as db:
             try:
                 result = await db.execute(select(Memory).filter_by(user_id=user_id))
                 memories = result.scalars().all()
-                return [MemoryModel.model_validate(memory) for memory in memories]
+                rows = [MemoryModel.model_validate(memory) for memory in memories]
+                if include_awg_gpt:
+                    return rows
+                return [
+                    memory
+                    for memory in rows
+                    if not self.is_awg_gpt_memory(memory)
+                ]
             except Exception:
                 return None
 
-    async def get_memory_by_id(self, id: str, db: AsyncSession | None = None) -> MemoryModel | None:
+    async def get_memory_by_id(
+        self,
+        id: str,
+        db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
+    ) -> MemoryModel | None:
         async with get_async_db_context(db) as db:
             try:
                 memory = await db.get(Memory, id)
-                return MemoryModel.model_validate(memory) if memory else None
+                if not memory or (self.is_awg_gpt_memory(memory) and not include_awg_gpt):
+                    return None
+                return MemoryModel.model_validate(memory)
             except Exception:
                 return None
 
-    async def delete_memory_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
+    async def delete_memory_by_id(
+        self,
+        id: str,
+        db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
+    ) -> bool:
         async with get_async_db_context(db) as db:
             try:
-                await db.execute(delete(Memory).filter_by(id=id))
+                memory = await db.get(Memory, id)
+                if not memory or (self.is_awg_gpt_memory(memory) and not include_awg_gpt):
+                    return False
+                await db.delete(memory)
                 await db.commit()
 
                 return True
@@ -142,21 +187,42 @@ class MemoriesTable:
             except Exception:
                 return False
 
-    async def delete_memories_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> bool:
+    async def delete_memories_by_user_id(
+        self,
+        user_id: str,
+        db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
+    ) -> bool:
         async with get_async_db_context(db) as db:
             try:
-                await db.execute(delete(Memory).filter_by(user_id=user_id))
+                if include_awg_gpt:
+                    await db.execute(delete(Memory).filter_by(user_id=user_id))
+                else:
+                    result = await db.execute(select(Memory).filter_by(user_id=user_id))
+                    for memory in result.scalars().all():
+                        if not self.is_awg_gpt_memory(memory):
+                            await db.delete(memory)
                 await db.commit()
 
                 return True
             except Exception:
                 return False
 
-    async def delete_memory_by_id_and_user_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> bool:
+    async def delete_memory_by_id_and_user_id(
+        self,
+        id: str,
+        user_id: str,
+        db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
+    ) -> bool:
         async with get_async_db_context(db) as db:
             try:
                 memory = await db.get(Memory, id)
-                if not memory or memory.user_id != user_id:
+                if (
+                    not memory
+                    or memory.user_id != user_id
+                    or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
+                ):
                     return False
 
                 await db.delete(memory)
@@ -170,6 +236,7 @@ class MemoriesTable:
         user_id: str,
         operations: list[dict],
         db: AsyncSession | None = None,
+        include_awg_gpt: bool = False,
     ) -> list[dict]:
         now = int(time.time())
         results: list[dict] = []
@@ -186,6 +253,8 @@ class MemoriesTable:
                         select(Memory).filter_by(user_id=user_id, content=content, type=memory_type, path=path)
                     )
                     existing = result.scalars().first()
+                    if existing and self.is_awg_gpt_memory(existing) and not include_awg_gpt:
+                        existing = None
                     if existing:
                         results.append(
                             {
@@ -217,7 +286,11 @@ class MemoriesTable:
                     memory_id = operation.get('id')
                     content = operation.get('content', '').strip()
                     memory = await db.get(Memory, memory_id)
-                    if not memory or memory.user_id != user_id:
+                    if (
+                        not memory
+                        or memory.user_id != user_id
+                        or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
+                    ):
                         raise ValueError(f'Memory not found: {memory_id}')
 
                     memory.content = content
@@ -236,7 +309,11 @@ class MemoriesTable:
                 elif action == 'move':
                     memory_id = operation.get('id')
                     memory = await db.get(Memory, memory_id)
-                    if not memory or memory.user_id != user_id:
+                    if (
+                        not memory
+                        or memory.user_id != user_id
+                        or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
+                    ):
                         raise ValueError(f'Memory not found: {memory_id}')
 
                     memory.path = operation.get('path')
@@ -251,7 +328,11 @@ class MemoriesTable:
                 elif action == 'remove':
                     memory_id = operation.get('id')
                     memory = await db.get(Memory, memory_id)
-                    if not memory or memory.user_id != user_id:
+                    if (
+                        not memory
+                        or memory.user_id != user_id
+                        or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
+                    ):
                         raise ValueError(f'Memory not found: {memory_id}')
 
                     await db.delete(memory)

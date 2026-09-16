@@ -16,6 +16,11 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import httpx
+from open_webui.integrations.confluence.runtime import (
+    AwgRequestState,
+    clear_awg_request_state,
+    register_awg_invocation,
+)
 
 
 class FixtureHandler(BaseHTTPRequestHandler):
@@ -62,6 +67,12 @@ async def invoke(instance, name, body, context):
 
 async def fixture_hydration(sources, query):
     return sources, False
+
+
+def uses_awg_typed_runtime(instance) -> bool:
+    """Return whether a candidate builds the canonical AWG request state."""
+    state_builder = getattr(instance, '_state', None)
+    return callable(state_builder) and getattr(state_builder, '__globals__', {}).get('AwgRequestState') is AwgRequestState
 
 
 def baseline_response_kind(answer: str, instance) -> str:
@@ -189,6 +200,7 @@ async def run(args):
     headers = {}
     if os.environ.get('CALIBRATION_MODEL_API_KEY'):
         headers['Authorization'] = f'Bearer {os.environ["CALIBRATION_MODEL_API_KEY"]}'
+    active_invocation = None
     try:
         async with httpx.AsyncClient(timeout=180, headers=headers) as client:
             for case in cases:
@@ -201,10 +213,21 @@ async def run(args):
                         instance._hydrate_sources = fixture_hydration
                     FixtureHandler.payload = case['lookup']
                     FixtureHandler.calls = 0
+                    metadata = {'chat_id': f'{variant}-{case["id"]}', 'message_id': case['id']}
+                    request = SimpleNamespace(state=SimpleNamespace())
+                    model = {
+                        'id': args.model_id,
+                        'info': {'meta': {'filterIds': [args.filter_id]}},
+                    }
+                    if uses_awg_typed_runtime(instance):
+                        register_awg_invocation(request, model, metadata)
+                        active_invocation = (request, model, metadata)
                     context = {
                         '__user__': {'id': 'calibration', 'role': 'admin'},
-                        '__metadata__': {'chat_id': f'{variant}-{case["id"]}', 'message_id': case['id']},
-                        '__request__': SimpleNamespace(state=SimpleNamespace()),
+                        '__metadata__': metadata,
+                        '__request__': request,
+                        '__model__': model,
+                        '__id__': args.filter_id,
                     }
                     body = {
                         'model': args.model_id,
@@ -233,18 +256,19 @@ async def run(args):
                     choice = response.json()['choices'][0]
                     message = choice['message']
                     original_answer = message.get('content') or ''
-                    result = await invoke(
-                        instance,
-                        'outlet',
-                        {'model': args.model_id, 'messages': body['messages'] + [message]},
-                        context,
-                    )
+                    try:
+                        result = await invoke(
+                            instance,
+                            'outlet',
+                            {'model': args.model_id, 'messages': body['messages'] + [message]},
+                            context,
+                        )
+                    finally:
+                        if active_invocation is not None:
+                            clear_awg_request_state(*active_invocation)
+                            active_invocation = None
                     answer = result['messages'][-1].get('content') or ''
-                    if variant == 'candidate':
-                        state = getattr(context['__request__'].state, 'awg_confluence_grounding', None) or {}
-                        response_kind = state.get('outcome', 'state_missing')
-                    else:
-                        response_kind = baseline_response_kind(answer, instance)
+                    response_kind = baseline_response_kind(answer, instance)
                     record = {
                         'id': case['id'],
                         'family': case['family'],
@@ -275,6 +299,8 @@ async def run(args):
                     records.append(record)
                     print(json.dumps(record), flush=True)
     finally:
+        if active_invocation is not None:
+            clear_awg_request_state(*active_invocation)
         server.shutdown()
         server.server_close()
         thread.join()

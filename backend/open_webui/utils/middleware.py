@@ -43,6 +43,7 @@ from open_webui.env import (
     RAG_SYSTEM_CONTEXT,
 )
 from open_webui.events import EVENTS, publish_event
+from open_webui.integrations.confluence.runtime import get_awg_request_state
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
@@ -2682,6 +2683,19 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     features = form_data.pop('features', None) or {}
     extra_params['__features__'] = features
+    is_awg_request, _ = get_awg_request_state(request, model, metadata)
+    if is_awg_request:
+        if await Config.get('memories.system_context.enable'):
+            form_data = await add_memory_context(request, form_data, user, model)
+    elif features.get('memory') and await Config.get('memories.system_context.enable'):
+        # features is client-supplied; re-check the permission the native FC path enforces.
+        if getattr(user, 'role', None) == 'admin' or await has_permission(
+            getattr(user, 'id', ''),
+            'features.memories',
+            await Config.get('user.permissions'),
+        ):
+            form_data = await add_memory_context(request, form_data, user, model)
+
     if features:
         if 'voice' in features and features['voice']:
             if await Config.get('task.voice.prompt.enable'):
@@ -2693,15 +2707,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     template,
                     form_data['messages'],
                 )
-
-        if 'memory' in features and features['memory'] and await Config.get('memories.system_context.enable'):
-            # features is client-supplied; re-check the permission the native FC path enforces.
-            if getattr(user, 'role', None) == 'admin' or await has_permission(
-                getattr(user, 'id', ''),
-                'features.memories',
-                await Config.get('user.permissions'),
-            ):
-                form_data = await add_memory_context(request, form_data, user, model)
 
         if 'web_search' in features and features['web_search'] and await Config.get('web.search.enable'):
             # features is client-supplied; re-check the permission the native FC path enforces.
