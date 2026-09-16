@@ -20,18 +20,22 @@ from open_webui.integrations.confluence.identity import (
     prompt_sha256,
     render_system_prompt,
 )
+from open_webui.integrations.confluence.response_text import UNKNOWN
 from open_webui.integrations.confluence.runtime import (
     ROUTE_RESPONSE_KINDS,
     STATE_KEY,
     STATE_VERSION,
     AwgFinalAnswer,
     AwgRequestState,
+    GroundedFallbackMode,
     ResponseKind,
     attest_awg_attachment,
     get_awg_request_state,
     set_awg_request_state,
 )
 from open_webui.integrations.confluence.scope_router import (
+    CORPORATE_FIRST_PERSON_RE,
+    CORPORATE_POSSESSIVE_RE,
     RouteDecision,
     latest_user_text,
     needs_project_clarification,
@@ -53,12 +57,11 @@ ALLOWED_SOURCE_HOST = 'conf.awg.ru'
 MAX_VALIDATED_ANSWER_CHARS = 32_768
 log = logging.getLogger(__name__)
 DEFAULT_PROFILE = load_awg_profile()
-UNKNOWN = 'В найденных материалах не удалось подтвердить ответ. Пришлите ссылку на нужную страницу — проверю её.'
 CLARIFY = DEFAULT_PROFILE.responses['clarification']
 UNAVAILABLE = 'Сейчас не удалось проверить Confluence. Попробуйте ещё раз чуть позже.'
 CITATION_FAILURE = (
     'Не удалось подтвердить ответ по найденным материалам. '
-    'Можно уточнить вопрос или прислать ссылку на нужную страницу.'
+    'Уточните проект, клиента, команду или предмет вопроса — сервер повторно проверит Confluence.'
 )
 SAFE_RESPONSES = {UNKNOWN, CLARIFY}
 REMOVABLE_COVERAGE_LIMITATION = 'Это не полный список компании; принадлежность к её штату здесь не подтверждена.'
@@ -73,7 +76,10 @@ PROJECT_LIST_INTENT_RE = re.compile(
     r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b.*'
     r'\b(?:проект\w*|кейс\w*|клиент\w*|projects?|cases?|clients?)\b'
     r'|\b(?:проект\w*|кейс\w*|клиент\w*|projects?|cases?|clients?)\b.*'
-    r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b',
+    r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b'
+    r'|\b(?:расскажи|обзор|tell|overview)\b.*'
+    r'\b(?:проекты|проектах|проектов|проектами|кейсы|кейсах|кейсов|кейсами|'
+    r'клиенты|клиентах|клиентов|клиентами|projects|cases|clients)\b',
     re.IGNORECASE,
 )
 PROJECT_SECTION_RE = re.compile(
@@ -85,6 +91,23 @@ PROJECT_SECTION_RE = re.compile(
     r'(?(emphasis)(?P=emphasis))'
     r'(?::|：)?',
     re.IGNORECASE,
+)
+PROJECT_COLLECTION_TITLE_RE = re.compile(
+    r'(?:'
+    r'(?:наши\s+)?(?:проекты|кейсы|клиенты)(?:\s+AWG)?'
+    r'|AWG\s+(?:проекты|кейсы|клиенты)'
+    r'|(?:список|реестр|портфель)\s+(?:проектов|кейсов|клиентов)(?:\s+AWG)?'
+    r'|AWG\s+(?:список|реестр|портфель)\s+(?:проектов|кейсов|клиентов)'
+    r'|(?:our\s+)?(?:projects|cases|clients)(?:\s+(?:of\s+)?AWG)?'
+    r'|AWG\s+(?:projects|cases|clients)'
+    r'|(?:list|registry|portfolio)\s+of\s+(?:AWG\s+|our\s+)?(?:projects|cases|clients)'
+    r'|AWG\s+(?:project|case|client)\s+(?:list|registry|portfolio)'
+    r')',
+    re.IGNORECASE,
+)
+PROJECT_COLLECTION_SHAPED_TITLE_RE = re.compile(
+    r'[A-ZА-ЯЁ0-9][A-Za-zА-Яа-яЁё0-9&+./\'()—–-]*\s+'
+    r'(?i:проекты|кейсы|клиенты|projects|cases|clients)'
 )
 PROJECT_LABELED_LINE_RE = re.compile(
     r'(?:[-*+] |[1-9]\d?[.)] )?'
@@ -320,7 +343,11 @@ def lookup_queries(messages: list[dict], expansions: tuple[str, ...] = ()) -> li
         re.search(r'\b(?:проект\w*|клиент\w*|кейс\w*|projects?|clients?|cases?)\b', normalized, re.IGNORECASE)
     )
     queries = []
-    if project_query and re.search(r'\bAWG\b', normalized, re.IGNORECASE):
+    if project_query and (
+        re.search(r'\bAWG\b', normalized, re.IGNORECASE)
+        or CORPORATE_POSSESSIVE_RE.search(normalized)
+        or CORPORATE_FIRST_PERSON_RE.search(normalized)
+    ):
         queries.append('AWG проекты клиенты кейсы')
     queries.append(normalized)
     if re.search(r'\b(Яндекс|YANDEX)\b', normalized, re.IGNORECASE):
@@ -640,7 +667,7 @@ def _literal_project_name(
     return name
 
 
-def _project_candidates(text: str):
+def _project_candidates(text: str, *, allow_plain_bullets: bool = False):
     in_project_section = False
     section_lines = 0
     for raw_line in text[:8000].splitlines():
@@ -661,6 +688,33 @@ def _project_candidates(text: str):
             match = PROJECT_LIST_ITEM_RE.fullmatch(line)
             if match is not None:
                 yield match['name'], True, 'line'
+                continue
+        if allow_plain_bullets:
+            match = PROJECT_LIST_ITEM_RE.fullmatch(line)
+            if match is not None:
+                yield match['name'], True, 'line'
+
+
+def _is_trusted_project_collection_source(title: object, text: str) -> bool:
+    if not isinstance(title, str):
+        return False
+    normalized_title = title.strip()
+    if PROJECT_COLLECTION_TITLE_RE.fullmatch(normalized_title) is not None:
+        return True
+    if PROJECT_COLLECTION_SHAPED_TITLE_RE.fullmatch(normalized_title) is None:
+        return False
+    names = set()
+    for raw_line in text[:8000].splitlines():
+        match = PROJECT_LIST_ITEM_RE.fullmatch(raw_line.strip())
+        if match is None:
+            continue
+        name = _literal_project_name(match['name'], section_item=True)
+        if name is None:
+            continue
+        names.add(name.casefold())
+        if len(names) >= 5:
+            return True
+    return False
 
 
 def _split_markdown_table_row(line: str) -> list[str] | None:
@@ -753,7 +807,8 @@ def _collect_project_entries(
         text = source.get('text')
         if not isinstance(text, str):
             continue
-        candidates = list(_project_candidates(text))
+        allow_plain_bullets = _is_trusted_project_collection_source(source.get('title'), text)
+        candidates = list(_project_candidates(text, allow_plain_bullets=allow_plain_bullets))
         table_values, source_tables_seen, source_table_rejected = _project_table_candidates(text)
         candidates.extend(table_values)
         tables_seen += source_tables_seen
@@ -803,7 +858,10 @@ def _project_list_fallback(
             diagnostics['table_scan'] = 'rejected'
     if not entries:
         return None, diagnostics
-    candidate = '\n'.join(f'- {name} [{source["id"]}] {source["url"]}' for name, source in entries)
+    project_lines = '\n'.join(f'- {name} [{source["id"]}] {source["url"]}' for name, source in entries)
+    cited_sources = list({source['id']: source for _, source in entries}.values())
+    coverage_references = ' '.join(f'[{source["id"]}] {source["url"]}' for source in cited_sources)
+    candidate = f'{project_lines}\n\nСписок может быть неполным. {coverage_references}'
     validated = grounded_answer(candidate, sources)
     if validated == CITATION_FAILURE:
         return None, diagnostics
@@ -815,6 +873,18 @@ def project_list_fallback(question: str, sources: list[dict]) -> str | None:
     """Build a cited project list from explicit literal source entries."""
     answer, _ = _project_list_fallback(question, sources)
     return answer
+
+
+def _project_navigation_fallback(question: str, sources: list[dict]) -> str | None:
+    if PROJECT_LIST_INTENT_RE.search(question) is None or not sources:
+        return None
+    references = '\n'.join(f'- [{source["id"]}] {source["url"]}' for source in sources[:4])
+    candidate = (
+        'Подтверждённый перечень проектов безопасно извлечь не удалось. '
+        f'Найденные материалы:\n{references}'
+    )
+    validated = grounded_answer(candidate, sources)
+    return None if validated == CITATION_FAILURE else validated
 
 
 def _requested_literal_fact_kinds(question: str) -> set[str]:
@@ -949,7 +1019,12 @@ def _literal_grounded_fallback(
         if validated != CITATION_FAILURE:
             parts.append(validated)
     if not parts:
-        return None, diagnostics
+        navigation_answer = _project_navigation_fallback(question, sources)
+        if navigation_answer is None:
+            return None, diagnostics
+        diagnostics['fallback_mode'] = 'forced_navigation'
+        diagnostics['fallback_present'] = True
+        return navigation_answer, diagnostics
     diagnostics['candidate_accepted'] = int(diagnostics['candidate_accepted']) + len(fact_entries)
     diagnostics['fallback_present'] = True
     return '\n'.join(parts), diagnostics
@@ -1012,11 +1087,18 @@ def finalize_awg_response(state: AwgRequestState | None, provider_answer: str) -
     if not state.sources:
         return AwgFinalAnswer(UNKNOWN, 'grounded_no_evidence')
     sources = list(state.sources)
-    result = _finalize_grounded_provider_answer(provider_answer, sources)
-    if result.response_kind == 'grounded_no_evidence' and state.grounded_fallback is not None:
+    if state.grounded_fallback_mode == 'forced_navigation' and state.grounded_fallback is not None:
         fallback = grounded_answer(state.grounded_fallback, sources)
-        if fallback != CITATION_FAILURE:
-            result = AwgFinalAnswer(fallback, 'grounded_partial')
+        result = AwgFinalAnswer(
+            fallback,
+            'grounded_partial' if fallback != CITATION_FAILURE else 'grounded_no_evidence',
+        )
+    else:
+        result = _finalize_grounded_provider_answer(provider_answer, sources)
+        if result.response_kind == 'grounded_no_evidence' and state.grounded_fallback is not None:
+            fallback = grounded_answer(state.grounded_fallback, sources)
+            if fallback != CITATION_FAILURE:
+                result = AwgFinalAnswer(fallback, 'grounded_partial')
     if len(result.text) > MAX_VALIDATED_ANSWER_CHARS:
         result = AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
     log_citation_failure(provider_answer, sources, result.text)
@@ -1167,6 +1249,7 @@ class Filter:
         unavailable_reason: str | None = None,
         deterministic_answer: str | None = None,
         grounded_fallback: str | None = None,
+        grounded_fallback_mode: GroundedFallbackMode = 'conditional',
     ) -> AwgRequestState:
         response_kind: ResponseKind = ROUTE_RESPONSE_KINDS[decision.route]
         provenance = tuple(
@@ -1195,6 +1278,7 @@ class Filter:
             provider_required=decision.route == 'confluence_grounded',
             deterministic_answer=deterministic_answer,
             grounded_fallback=grounded_fallback,
+            grounded_fallback_mode=grounded_fallback_mode,
         )
 
     def _append_policy(self, body: dict, directive: str) -> None:
@@ -1416,8 +1500,14 @@ class Filter:
         fallback_diagnostics = None
         if unavailable:
             fallback = None
+            fallback_mode: GroundedFallbackMode = 'conditional'
         else:
             fallback, fallback_diagnostics = _literal_grounded_fallback(question, sources)
+            fallback_mode = (
+                'forced_navigation'
+                if fallback_diagnostics.get('fallback_mode') == 'forced_navigation'
+                else 'conditional'
+            )
         state = self._state(
             decision,
             model_id=model_id,
@@ -1428,6 +1518,7 @@ class Filter:
             unavailable=unavailable,
             unavailable_reason=unavailable_reason,
             grounded_fallback=fallback,
+            grounded_fallback_mode=fallback_mode,
         )
         set_awg_request_state(__request__, model_id, invocation_id, state)
         context = (

@@ -27,7 +27,8 @@ CORPORATE_POSSESSIVE_RE = re.compile(
     r'\b(?:у\s+нас|наш(?:а|и|е|его|ей|ему|им|их)?|our|ours)\b',
     re.IGNORECASE,
 )
-UNRELATED_COMPANY_RE = re.compile(r'\b(?:яндекс|yandex)\b', re.IGNORECASE)
+CORPORATE_FIRST_PERSON_RE = re.compile(r'\b(?:мы|we)\b', re.IGNORECASE)
+UNRELATED_COMPANY_RE = re.compile(r'\b(?:яндекс\w*|yandex)\b', re.IGNORECASE)
 GREETING_RE = re.compile(
     r'^\s*(?:(?:привет|здравствуй(?:те)?|доброе\s+'
     r'(?:утро|день|вечер)|hi|hello|hey)[!,.\s]*)+'
@@ -44,7 +45,9 @@ META_RE = re.compile(
     re.IGNORECASE,
 )
 PROFILE_RE = re.compile(
-    r'\b(?:что\s+такое\s+(?:awg|avg|авг)|чем\s+занимается\s+(?:компания\s+)?(?:awg|avg|авг)|'
+    r'\b(?:кто\s+(?:такие\s+)?мы|что\s+мы\s+делаем|чем\s+мы\s+занимаемся|'
+    r'who\s+are\s+we|what\s+do\s+we\s+do|'
+    r'что\s+такое\s+(?:awg|avg|авг)|чем\s+занимается\s+(?:компания\s+)?(?:awg|avg|авг)|'
     r'расскажи\s+(?:мне\s+)?(?:о|про)\s+(?:компанию\s+)?(?:awg|avg|авг)|'
     r'(?:какие\s+)?услуг\w*\s+(?:(?:у|компании)\s+)?(?:awg|avg|авг)|'
     r'экспертиз\w*\s+(?:awg|avg|авг)|what\s+does\s+(?:awg|avg|авг)\s+do|'
@@ -69,7 +72,8 @@ GROUNDED_INTENT_RE = re.compile(
     r'менеджер\w*|документ\w*|инструкц\w*|процесс\w*|регламент\w*|'
     r'встреч\w*|решени\w*|статус\w*|согласов\w*|отпуск\w*|офис\w*|'
     r'заказчик\w*|договор\w*|ваканси\w*|должност\w*|отдел\w*|'
-    r'project|team|client|employee|developer|manager|document|process|policy|meeting|status|confluence)\b',
+    r'projects?|teams?|clients?|employees?|developers?|managers?|documents?|process(?:es)?|'
+    r'polic(?:y|ies)|meetings?|status(?:es)?|confluence)\b',
     re.IGNORECASE,
 )
 POLICY_ATTACK_RE = re.compile(
@@ -215,6 +219,12 @@ def _grounded_scope_decision(
         return 'personal_alias'
     if CORPORATE_POSSESSIVE_RE.search(question):
         return 'awg_possessive_intent'
+    if (
+        CORPORATE_FIRST_PERSON_RE.search(question)
+        and GROUNDED_INTENT_RE.search(question)
+        and not UNRELATED_COMPANY_RE.search(question)
+    ):
+        return 'awg_first_person_intent'
     if _has_prior_awg_anchor(messages):
         return 'confirmed_awg_continuation'
     if UNRELATED_COMPANY_RE.search(question):
@@ -242,7 +252,11 @@ def route_request(
         return RouteDecision('out_of_scope', 'policy_extraction_or_override')
     if GREETING_RE.fullmatch(question):
         return RouteDecision('greeting_help', 'assistant_help')
-    if PROFILE_RE.search(question) and not GROUNDED_INTENT_RE.search(question):
+    if (
+        PROFILE_RE.search(question)
+        and not GROUNDED_INTENT_RE.search(question)
+        and not UNRELATED_COMPANY_RE.search(question)
+    ):
         return RouteDecision('corporate_profile', 'approved_profile')
     if META_RE.search(question) and not GROUNDED_INTENT_RE.search(question):
         return RouteDecision('assistant_meta', 'assistant_identity')
