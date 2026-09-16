@@ -107,6 +107,7 @@ async def test_awg_preference_injects_without_client_feature_or_model_capability
         filter_id=FILTER_ID,
         profile_version='test',
         prompt_hash='hash',
+        response_kind='conversational',
         sources=(),
         memory_operation=None,
         scope_decision='test',

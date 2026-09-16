@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import httpx
+from open_webui.integrations.confluence.response_text import UNKNOWN
 from open_webui.integrations.confluence.runtime import (
     AwgRequestState,
     clear_awg_request_state,
@@ -125,10 +126,7 @@ def evaluate(answer: str, expected: dict, sources: list[dict], response_kind: st
         )
         numeric_total = bool(re.search(r'[0-9]', prose))
         unsafe = any(claim.casefold() in lower for claim in expected.get('unsafe_claims', []))
-        controlled_unknown = response_kind == 'unknown' and answer.strip() == (
-            'В найденных материалах не удалось подтвердить ответ. '
-            'Пришлите ссылку на нужную страницу — проверю её.'
-        )
+        controlled_unknown = response_kind == 'unknown' and answer.strip() == UNKNOWN
         subject = expected['subject']
         subject_present = (
             any(token in prose for token in ('количеств', 'сколько', 'числ'))
