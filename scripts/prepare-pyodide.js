@@ -1,3 +1,7 @@
+import { loadPyodide } from 'pyodide';
+import { setGlobalDispatcher, ProxyAgent } from 'undici';
+import { writeFile, readFile, copyFile, readdir, rmdir, access, mkdir, rm } from 'fs/promises';
+
 const packages = [
 	'micropip',
 	'packaging',
@@ -23,10 +27,6 @@ const packages = [
 // Packages already provided by the Pyodide distribution (click, platformdirs,
 // typing_extensions, etc.) do NOT need to be listed here.
 const pypiPackages = ['black', 'pathspec', 'mypy_extensions', 'pytokens'];
-
-import { loadPyodide } from 'pyodide';
-import { setGlobalDispatcher, ProxyAgent } from 'undici';
-import { writeFile, readFile, copyFile, readdir, rmdir, access, mkdir, rm } from 'fs/promises';
 
 /**
  * Loading network proxy configurations from the environment variables.
@@ -71,8 +71,9 @@ async function downloadPackages() {
 		return;
 	}
 
-	const packageJson = JSON.parse(await readFile('package.json'));
-	const pyodideVersion = packageJson.dependencies.pyodide.replace('^', '');
+	const { version: pyodideVersion } = JSON.parse(
+		await readFile('node_modules/pyodide/package.json', 'utf-8')
+	);
 
 	try {
 		const pyodidePackageJson = JSON.parse(await readFile('static/pyodide/package.json'));

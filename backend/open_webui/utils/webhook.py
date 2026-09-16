@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from urllib.parse import urljoin
 
 from open_webui.config import WEBUI_FAVICON_URL
 from open_webui.env import (
@@ -9,6 +10,7 @@ from open_webui.env import (
 )
 from open_webui.retrieval.web.utils import get_ssrf_safe_session, validate_url
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.models.config import Config
 
 log = logging.getLogger(__name__)
 
@@ -72,13 +74,18 @@ async def post_webhook(name: str, url: str, message: str, event_data: dict, desc
                         # LICENSE covers this Open WebUI webhook logo.
                         # Do not alter, remove, obscure, or replace it except as LICENSE permits:
                         # https://docs.openwebui.com/license.
-                        'activityImage': WEBUI_FAVICON_URL,
                         'text': description,
                         'facts': facts,
                         'markdown': True,
                     }
                 ],
             }
+            favicon_url = WEBUI_FAVICON_URL
+            if favicon_url.startswith('/'):
+                webui_url = await Config.get('webui.url')
+                favicon_url = urljoin(webui_url, favicon_url) if webui_url else ''
+            if favicon_url.startswith(('https://', 'http://')):
+                payload['sections'][0]['activityImage'] = favicon_url
         # Default Payload
         else:
             payload = event_data
