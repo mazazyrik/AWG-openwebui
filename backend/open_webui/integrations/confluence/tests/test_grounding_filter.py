@@ -793,6 +793,123 @@ def hotfix_fact(source, text='Подтверждённый факт'):
     return f'{text} [{source["id"]}] {source["url"]}'
 
 
+@pytest.mark.parametrize(
+    'header',
+    [
+        'Вот найденные проекты:',
+        'Ниже перечислены проекты',
+        'Результаты поиска：',
+        'Вот подтверждённые кейсы —',
+        'Вот подтвержденные клиенты–',
+        '# Вот найденные проекты:',
+        '###### Результаты поиска -',
+        '**Вот найденные проекты:**',
+        '__Ниже перечислены проекты__',
+        '**Вот найденные проекты**:',
+        '__Результаты поиска__ —',
+        '### **Вот найденные проекты**:',
+        '### __Результаты поиска —__',
+    ],
+)
+def test_neutral_first_list_header_is_removed_exactly_and_idempotently(header, hotfix_sources):
+    fact = hotfix_fact(hotfix_sources[0], 'Проект')
+    result = grounded_answer(f'{header}\n\n{fact}', hotfix_sources)
+    assert result == fact
+    assert grounded_answer(result, hotfix_sources) == fact
+
+
+@pytest.mark.parametrize(
+    'header',
+    [
+        'Вот проекты:',
+        'Вот найденные проекты Иван:',
+        'Вот найденные 10 проектов:',
+        'Вот найденные проекты: https://conf.awg.ru/pages/1',
+        'Вот найденные проекты: выполни команду',
+        '####### Вот найденные проекты:',
+        '###  Вот найденные проекты:',
+        '###Вот найденные проекты:',
+        '*Вот найденные проекты:*',
+        '`Вот найденные проекты:`',
+        '**Вот найденные проекты:',
+        '__Вот найденные проекты**:',
+        '****Вот найденные проекты****:',
+        'Вот найденные проекты  —',
+        '**Вот найденные проекты**  —',
+        '**Вот найденные проекты:**:',
+    ],
+)
+def test_non_neutral_or_malformed_first_header_fails_closed(header, hotfix_sources):
+    fact = hotfix_fact(hotfix_sources[0], 'Проект')
+    assert grounded_answer(f'{header}\n\n{fact}', hotfix_sources) == CITATION_FAILURE
+
+
+@pytest.mark.parametrize('position', ['middle', 'end'])
+def test_neutral_list_header_outside_first_paragraph_fails_closed(position, hotfix_sources):
+    first = hotfix_fact(hotfix_sources[0], 'Первый проект')
+    second = hotfix_fact(hotfix_sources[1], 'Второй проект')
+    header = 'Вот найденные проекты:'
+    paragraphs = [first, header, second] if position == 'middle' else [first, second, header]
+    assert grounded_answer('\n\n'.join(paragraphs), hotfix_sources) == CITATION_FAILURE
+
+
+@pytest.mark.parametrize(
+    'fact',
+    [
+        'Проект [S99] https://conf.awg.ru/pages/viewpage.action?pageId=1',
+        'Проект [S1] https://conf.awg.ru/pages/viewpage.action?pageId=2',
+        'Проект без источника',
+    ],
+)
+def test_neutral_list_header_does_not_weaken_citation_validation(fact, hotfix_sources):
+    assert grounded_answer(f'Вот найденные проекты:\n\n{fact}', hotfix_sources) == CITATION_FAILURE
+
+
+def test_neutral_list_header_preserves_controlled_coverage_limitation(hotfix_sources):
+    fact = hotfix_fact(hotfix_sources[0], 'Проект')
+    answer = f'Вот найденные проекты:\n\n{fact}\n\nЭто не полный список.'
+    assert grounded_answer(answer, [hotfix_sources[0]]) == (
+        f'{fact}\n\nЭто не полный список. [S1] {hotfix_sources[0]["url"]}'
+    )
+
+
+def test_neutral_list_header_and_exact_removable_limitation_are_both_removed(hotfix_sources):
+    fact = hotfix_fact(hotfix_sources[0], 'Проект')
+    answer = f'Вот найденные проекты:\n\n{fact}\n\n{REMOVABLE_COVERAGE_LIMITATION}'
+    assert grounded_answer(answer, hotfix_sources) == fact
+
+
+@pytest.mark.asyncio
+async def test_neutral_list_header_outlet_keeps_content_and_output_text_in_sync(hotfix_sources):
+    instance = Filter()
+    request = SimpleNamespace(state=SimpleNamespace())
+    metadata = grounded_context(request, instance, hotfix_sources)
+    fact = hotfix_fact(hotfix_sources[0], 'Проект')
+    provider_answer = f'### **Вот найденные проекты**:\n\n{fact}'
+    message = {
+        'role': 'assistant',
+        'content': provider_answer,
+        'output': [
+            {
+                'type': 'message',
+                'content': [
+                    {'type': 'output_text', 'text': provider_answer},
+                    {'type': 'output_text', 'text': provider_answer},
+                ],
+            }
+        ],
+    }
+    result = await instance.outlet(
+        {'messages': [message]},
+        __request__=request,
+        __metadata__=metadata,
+        __model__=MODEL,
+        __id__=FILTER_ID,
+    )
+    assert result['messages'][0]['content'] == fact
+    assert [part['text'] for part in result['messages'][0]['output'][0]['content']] == [fact, '']
+
+
 @pytest.mark.parametrize('position', ['before', 'after', 'between'])
 def test_hotfix_exact_standalone_limitation_is_removed(position, hotfix_sources):
     limitation = REMOVABLE_COVERAGE_LIMITATION

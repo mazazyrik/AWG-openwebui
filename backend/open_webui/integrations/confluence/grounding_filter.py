@@ -58,6 +58,20 @@ COVERAGE_LIMITATIONS = {
     'По этим материалам нельзя подтвердить полный состав команды.',
 }
 CITATION_RE = re.compile(r'\[S([1-9]\d*)\]')
+NEUTRAL_LIST_LEAD_IN_RE = re.compile(
+    r'(?:#{1,6} )?'
+    r'(?P<emphasis>\*\*|__)?'
+    r'(?:'
+    r'вот (?:найденные|подтвержд[её]нные) (?:проекты|кейсы|клиенты)'
+    r'|ниже перечислены (?:(?:найденные|подтвержд[её]нные) )?(?:проекты|кейсы|клиенты)'
+    r'|результаты поиска'
+    r')'
+    r'(?(emphasis)'
+    r'(?:(?::|：| ?[—–-])?(?P=emphasis)|(?P=emphasis)(?::|：| ?[—–-]))'
+    r'|(?::|：| ?[—–-])?'
+    r')',
+    re.IGNORECASE,
+)
 URL_WRAPPER_RE = re.compile(
     r'\[[^\[\]\n]+\]\((?P<markdown_url>https?://[^\s<>\[\]()"\'«»]+)\)'
     r'|<(?P<angle_url>https?://[^\s<>\[\]()"\'«»]+)>'
@@ -338,11 +352,23 @@ def repair_paragraph_references(
     return None
 
 
+def remove_neutral_list_lead_in(answer: str) -> str:
+    """Remove a standalone neutral header at the start of a cited list."""
+    paragraphs = re.split(r'\n\s*\n', answer)
+    if len(paragraphs) < 2:
+        return answer
+    first = paragraphs[0]
+    if len(first) > 80 or NEUTRAL_LIST_LEAD_IN_RE.fullmatch(first) is None:
+        return answer
+    return '\n\n'.join(paragraphs[1:]).strip()
+
+
 def grounded_answer(answer: str, sources: list[dict]) -> str:
     """Validate paired citations and repair only unambiguous one-sided references."""
+    if answer.strip() in SAFE_RESPONSES:
+        return answer.strip()
+    answer = remove_neutral_list_lead_in(answer)
     answer = answer.strip()
-    if answer in SAFE_RESPONSES:
-        return answer
     answer = '\n\n'.join(
         paragraph
         for paragraph in re.split(r'\n\s*\n', answer)
