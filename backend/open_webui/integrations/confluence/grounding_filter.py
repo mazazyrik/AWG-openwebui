@@ -27,6 +27,7 @@ from open_webui.integrations.confluence.runtime import (
     STATE_VERSION,
     AwgFinalAnswer,
     AwgRequestState,
+    GroundedFallbackMode,
     ResponseKind,
     attest_awg_attachment,
     get_awg_request_state,
@@ -874,6 +875,18 @@ def project_list_fallback(question: str, sources: list[dict]) -> str | None:
     return answer
 
 
+def _project_navigation_fallback(question: str, sources: list[dict]) -> str | None:
+    if PROJECT_LIST_INTENT_RE.search(question) is None or not sources:
+        return None
+    references = '\n'.join(f'- [{source["id"]}] {source["url"]}' for source in sources[:4])
+    candidate = (
+        'Подтверждённый перечень проектов безопасно извлечь не удалось. '
+        f'Найденные материалы:\n{references}'
+    )
+    validated = grounded_answer(candidate, sources)
+    return None if validated == CITATION_FAILURE else validated
+
+
 def _requested_literal_fact_kinds(question: str) -> set[str]:
     kinds = set()
     if PERSON_ROLE_INTENT_RE.search(question):
@@ -1006,7 +1019,12 @@ def _literal_grounded_fallback(
         if validated != CITATION_FAILURE:
             parts.append(validated)
     if not parts:
-        return None, diagnostics
+        navigation_answer = _project_navigation_fallback(question, sources)
+        if navigation_answer is None:
+            return None, diagnostics
+        diagnostics['fallback_mode'] = 'forced_navigation'
+        diagnostics['fallback_present'] = True
+        return navigation_answer, diagnostics
     diagnostics['candidate_accepted'] = int(diagnostics['candidate_accepted']) + len(fact_entries)
     diagnostics['fallback_present'] = True
     return '\n'.join(parts), diagnostics
@@ -1069,11 +1087,18 @@ def finalize_awg_response(state: AwgRequestState | None, provider_answer: str) -
     if not state.sources:
         return AwgFinalAnswer(UNKNOWN, 'grounded_no_evidence')
     sources = list(state.sources)
-    result = _finalize_grounded_provider_answer(provider_answer, sources)
-    if result.response_kind == 'grounded_no_evidence' and state.grounded_fallback is not None:
+    if state.grounded_fallback_mode == 'forced_navigation' and state.grounded_fallback is not None:
         fallback = grounded_answer(state.grounded_fallback, sources)
-        if fallback != CITATION_FAILURE:
-            result = AwgFinalAnswer(fallback, 'grounded_partial')
+        result = AwgFinalAnswer(
+            fallback,
+            'grounded_partial' if fallback != CITATION_FAILURE else 'grounded_no_evidence',
+        )
+    else:
+        result = _finalize_grounded_provider_answer(provider_answer, sources)
+        if result.response_kind == 'grounded_no_evidence' and state.grounded_fallback is not None:
+            fallback = grounded_answer(state.grounded_fallback, sources)
+            if fallback != CITATION_FAILURE:
+                result = AwgFinalAnswer(fallback, 'grounded_partial')
     if len(result.text) > MAX_VALIDATED_ANSWER_CHARS:
         result = AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
     log_citation_failure(provider_answer, sources, result.text)
@@ -1224,6 +1249,7 @@ class Filter:
         unavailable_reason: str | None = None,
         deterministic_answer: str | None = None,
         grounded_fallback: str | None = None,
+        grounded_fallback_mode: GroundedFallbackMode = 'conditional',
     ) -> AwgRequestState:
         response_kind: ResponseKind = ROUTE_RESPONSE_KINDS[decision.route]
         provenance = tuple(
@@ -1252,6 +1278,7 @@ class Filter:
             provider_required=decision.route == 'confluence_grounded',
             deterministic_answer=deterministic_answer,
             grounded_fallback=grounded_fallback,
+            grounded_fallback_mode=grounded_fallback_mode,
         )
 
     def _append_policy(self, body: dict, directive: str) -> None:
@@ -1473,8 +1500,14 @@ class Filter:
         fallback_diagnostics = None
         if unavailable:
             fallback = None
+            fallback_mode: GroundedFallbackMode = 'conditional'
         else:
             fallback, fallback_diagnostics = _literal_grounded_fallback(question, sources)
+            fallback_mode = (
+                'forced_navigation'
+                if fallback_diagnostics.get('fallback_mode') == 'forced_navigation'
+                else 'conditional'
+            )
         state = self._state(
             decision,
             model_id=model_id,
@@ -1485,6 +1518,7 @@ class Filter:
             unavailable=unavailable,
             unavailable_reason=unavailable_reason,
             grounded_fallback=fallback,
+            grounded_fallback_mode=fallback_mode,
         )
         set_awg_request_state(__request__, model_id, invocation_id, state)
         context = (

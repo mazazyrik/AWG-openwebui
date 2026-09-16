@@ -20,7 +20,7 @@ from open_webui.utils.misc import (
 STATE_KEY = 'awg_confluence_grounding'
 ATTESTATION_KEY = 'awg_confluence_attestations'
 INVOCATION_KEY = 'awg_confluence_invocations'
-STATE_VERSION = 3
+STATE_VERSION = 4
 MAX_PROVIDER_RESPONSE_BYTES = 65_536
 MAX_PROVIDER_RESPONSE_CHARS = 16_384
 
@@ -41,6 +41,7 @@ ResponseKind = Literal[
     'grounded_partial',
     'grounded_no_evidence',
 ]
+GroundedFallbackMode = Literal['conditional', 'forced_navigation']
 ROUTE_RESPONSE_KINDS: dict[Route, ResponseKind] = {
     'assistant_meta': 'conversational',
     'memory_command': 'conversational',
@@ -71,6 +72,7 @@ class AwgRequestState:
     provider_required: bool
     deterministic_answer: str | None
     grounded_fallback: str | None = None
+    grounded_fallback_mode: GroundedFallbackMode = 'conditional'
 
 
 @dataclass(frozen=True)
@@ -236,6 +238,10 @@ def get_awg_request_state(
     if state.grounded_fallback is not None and (
         not state.provider_required or not isinstance(state.grounded_fallback, str)
     ):
+        return True, None
+    if state.grounded_fallback_mode not in ('conditional', 'forced_navigation'):
+        return True, None
+    if state.grounded_fallback_mode == 'forced_navigation' and state.grounded_fallback is None:
         return True, None
     return True, state
 

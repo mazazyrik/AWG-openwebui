@@ -52,7 +52,16 @@ def attached_context(request, *, stream=False):
     return metadata
 
 
-def grounded_context(request, instance, sources, *, unavailable=False, stream=False, grounded_fallback=None):
+def grounded_context(
+    request,
+    instance,
+    sources,
+    *,
+    unavailable=False,
+    stream=False,
+    grounded_fallback=None,
+    grounded_fallback_mode='conditional',
+):
     metadata = {}
     invocation_id = register_awg_invocation(request, MODEL, metadata)
     attest_awg_attachment(request, MODEL, metadata, FILTER_ID, stream)
@@ -65,6 +74,7 @@ def grounded_context(request, instance, sources, *, unavailable=False, stream=Fa
         sources=sources,
         unavailable=unavailable,
         grounded_fallback=grounded_fallback,
+        grounded_fallback_mode=grounded_fallback_mode,
     )
     set_awg_request_state(request, MODEL['id'], invocation_id, state)
     return metadata
@@ -1132,6 +1142,25 @@ def expected_project_fallback(*entries):
     return f'{project_lines}\n\nСписок может быть неполным. {coverage}'
 
 
+def project_navigation_source(index=1):
+    return {
+        'id': f'S{index}',
+        'page_id': str(9000 + index),
+        'title': f'Закрытый заголовок {index}',
+        'url': f'https://confluence.example.com/sources/{index}',
+        'text': f'Закрытое название проекта {index}',
+        'relevant_excerpt': f'Закрытый фрагмент {index}',
+    }
+
+
+def project_navigation_fallback(sources):
+    fallback, diagnostics = _literal_grounded_fallback('расскажи про наши проекты', sources)
+    assert diagnostics['fallback_present'] is True
+    assert diagnostics['fallback_mode'] == 'forced_navigation'
+    assert fallback is not None
+    return fallback
+
+
 @pytest.mark.asyncio
 async def test_screenshot_project_overview_inlet_builds_redacted_literal_fallback():
     instance = Filter()
@@ -1731,8 +1760,45 @@ def test_project_fallback_does_not_replace_valid_provider_answer():
     assert finalize_awg_answer(state, CLARIFY) == CLARIFY
 
 
-def test_project_request_without_literal_candidate_remains_fail_closed():
-    source = project_source('Общая информация без перечня.')
+@pytest.mark.asyncio
+async def test_project_navigation_inlet_sets_forced_mode():
+    source = project_navigation_source()
+    expected = project_navigation_fallback([source])
+    instance = Filter()
+    instance._grounded_sources = AsyncMock(return_value=([source], False, None))
+    request = SimpleNamespace(state=SimpleNamespace())
+
+    await attached_inlet(instance, {'messages': messages('расскажи про наши проекты')}, request)
+
+    state = next(iter(getattr(request.state, STATE_KEY).states.values()))
+    assert state.grounded_fallback == expected
+    assert state.grounded_fallback_mode == 'forced_navigation'
+
+
+@pytest.mark.asyncio
+async def test_invalid_navigation_citation_pair_inlet_cannot_set_forced_mode(caplog):
+    first = project_navigation_source(1)
+    second = project_navigation_source(2)
+    second['id'] = first['id']
+    instance = Filter()
+    instance._grounded_sources = AsyncMock(return_value=([first, second], False, None))
+    request = SimpleNamespace(state=SimpleNamespace())
+    caplog.set_level('INFO', logger='open_webui.integrations.confluence.grounding_filter')
+
+    await attached_inlet(instance, {'messages': messages('расскажи про наши проекты')}, request)
+
+    state = next(iter(getattr(request.state, STATE_KEY).states.values()))
+    diagnostic = next(
+        record.getMessage() for record in caplog.records if record.getMessage().startswith('awg_gpt_route')
+    )
+    assert state.grounded_fallback is None
+    assert state.grounded_fallback_mode == 'conditional'
+    assert 'fallback_present=False' in diagnostic
+
+
+def test_forced_project_navigation_replaces_invented_project_with_valid_citation_pair():
+    source = project_navigation_source()
+    fallback = project_navigation_fallback([source])
     state = Filter()._state(
         RouteDecision('confluence_grounded', 'test'),
         model_id=MODEL['id'],
@@ -1740,10 +1806,177 @@ def test_project_request_without_literal_candidate_remains_fail_closed():
         filter_id=FILTER_ID,
         client_stream=False,
         sources=[source],
-        grounded_fallback=project_list_fallback('Какие проекты делает AWG?', [source]),
+        grounded_fallback=fallback,
+        grounded_fallback_mode='forced_navigation',
     )
-    assert state.grounded_fallback is None
-    assert finalize_awg_answer(state, CITATION_FAILURE) == CITATION_FAILURE
+    provider_answer = f'Выдуманный проект «Альфа» [S1] {source["url"]}'
+
+    result = finalize_awg_response(state, provider_answer)
+
+    assert (result.text, result.response_kind) == (fallback, 'grounded_partial')
+    assert 'Альфа' not in result.text
+
+
+def test_forced_project_navigation_replaces_other_formally_valid_cited_provider_fact():
+    source = project_navigation_source()
+    fallback = project_navigation_fallback([source])
+    state = Filter()._state(
+        RouteDecision('confluence_grounded', 'test'),
+        model_id=MODEL['id'],
+        invocation_id='invocation',
+        filter_id=FILTER_ID,
+        client_stream=False,
+        sources=[source],
+        grounded_fallback=fallback,
+        grounded_fallback_mode='forced_navigation',
+    )
+    provider_answer = f'Компания завершила миграцию [S1] {source["url"]}'
+
+    assert finalize_awg_answer(state, provider_answer) == fallback
+
+
+@pytest.mark.parametrize('provider_answer', [UNKNOWN, CITATION_FAILURE])
+def test_forced_project_navigation_replaces_no_evidence_provider_answers(provider_answer):
+    source = project_navigation_source()
+    fallback = project_navigation_fallback([source])
+    state = Filter()._state(
+        RouteDecision('confluence_grounded', 'test'),
+        model_id=MODEL['id'],
+        invocation_id='invocation',
+        filter_id=FILTER_ID,
+        client_stream=False,
+        sources=[source],
+        grounded_fallback=fallback,
+        grounded_fallback_mode='forced_navigation',
+    )
+
+    assert finalize_awg_answer(state, provider_answer) == fallback
+
+
+def test_literal_project_fallback_remains_conditional():
+    source = project_source('Проект: Север')
+    fallback, diagnostics = _literal_grounded_fallback('Какие проекты делает AWG?', [source])
+    state = Filter()._state(
+        RouteDecision('confluence_grounded', 'test'),
+        model_id=MODEL['id'],
+        invocation_id='invocation',
+        filter_id=FILTER_ID,
+        client_stream=False,
+        sources=[source],
+        grounded_fallback=fallback,
+    )
+    provider_answer = f'Подтверждён другой факт [S1] {source["url"]}'
+
+    assert diagnostics['fallback_present'] is True
+    assert 'fallback_mode' not in diagnostics
+    assert state.grounded_fallback_mode == 'conditional'
+    assert finalize_awg_answer(state, provider_answer) == provider_answer
+    assert finalize_awg_answer(state, UNKNOWN) == fallback
+
+
+def test_forced_project_navigation_with_empty_sources_returns_unknown():
+    state = Filter()._state(
+        RouteDecision('confluence_grounded', 'test'),
+        model_id=MODEL['id'],
+        invocation_id='invocation',
+        filter_id=FILTER_ID,
+        client_stream=False,
+        grounded_fallback='Небезопасный fallback',
+        grounded_fallback_mode='forced_navigation',
+    )
+
+    assert finalize_awg_answer(state, 'Непроверенный ответ') == UNKNOWN
+
+
+def test_unavailable_project_lookup_precedes_forced_navigation():
+    source = project_navigation_source()
+    fallback = project_navigation_fallback([source])
+    state = Filter()._state(
+        RouteDecision('confluence_grounded', 'test'),
+        model_id=MODEL['id'],
+        invocation_id='invocation',
+        filter_id=FILTER_ID,
+        client_stream=False,
+        sources=[source],
+        unavailable=True,
+        unavailable_reason='mcp_unavailable',
+        grounded_fallback=fallback,
+        grounded_fallback_mode='forced_navigation',
+    )
+
+    assert finalize_awg_answer(state, 'Непроверенный ответ') == UNAVAILABLE
+
+
+@pytest.mark.parametrize('source_count', [1, 2, 3, 4])
+def test_project_navigation_exposes_only_bounded_source_ids_and_urls(source_count):
+    sources = [project_navigation_source(index) for index in range(1, source_count + 1)]
+
+    fallback = project_navigation_fallback(sources)
+
+    assert fallback.count('\n- [S') == source_count
+    for source in sources:
+        assert f'[{source["id"]}] {source["url"]}' in fallback
+        assert source['title'] not in fallback
+        assert source['text'] not in fallback
+        assert source['relevant_excerpt'] not in fallback
+        assert source['page_id'] not in fallback
+
+
+@pytest.mark.parametrize('collision', ['id', 'url'])
+def test_invalid_navigation_citation_identity_cannot_enable_forced_fallback(collision):
+    first = project_navigation_source(1)
+    second = project_navigation_source(2)
+    second[collision] = first[collision]
+
+    fallback, diagnostics = _literal_grounded_fallback('расскажи про наши проекты', [first, second])
+
+    assert fallback is None
+    assert diagnostics['fallback_present'] is False
+    assert 'fallback_mode' not in diagnostics
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stream', [False, True])
+async def test_forced_project_navigation_keeps_content_output_and_response_contract_in_sync(stream):
+    source = project_navigation_source()
+    fallback = project_navigation_fallback([source])
+    instance = Filter()
+    request = SimpleNamespace(state=SimpleNamespace())
+    metadata = grounded_context(
+        request,
+        instance,
+        [source],
+        stream=stream,
+        grounded_fallback=fallback,
+        grounded_fallback_mode='forced_navigation',
+    )
+    provider_answer = f'Выдуманный проект «Альфа» [S1] {source["url"]}'
+    message = {
+        'role': 'assistant',
+        'content': provider_answer,
+        'output': [
+            {
+                'type': 'message',
+                'content': [
+                    {'type': 'output_text', 'text': provider_answer},
+                    {'type': 'output_text', 'text': 'unsafe duplicate'},
+                ],
+            }
+        ],
+    }
+
+    result = await instance.outlet(
+        {'messages': [message]},
+        __request__=request,
+        __metadata__=metadata,
+        __model__=MODEL,
+        __id__=FILTER_ID,
+    )
+
+    assert result['messages'][0]['content'] == fallback
+    assert [part['text'] for part in result['messages'][0]['output'][0]['content']] == [fallback, '']
+    response = build_awg_response(fallback, MODEL['id'], stream)
+    assert await extract_awg_provider_text(response) == fallback
 
 
 @pytest.mark.asyncio
