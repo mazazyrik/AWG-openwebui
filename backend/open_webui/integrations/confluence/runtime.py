@@ -51,6 +51,7 @@ class AwgRequestState:
     client_stream: bool
     provider_required: bool
     deterministic_answer: str | None
+    grounded_fallback: str | None = None
 
 
 @dataclass
@@ -204,6 +205,10 @@ def get_awg_request_state(
     if state.provider_required != (state.route == 'confluence_grounded'):
         return True, None
     if state.provider_required == (state.deterministic_answer is not None):
+        return True, None
+    if state.grounded_fallback is not None and (
+        not state.provider_required or not isinstance(state.grounded_fallback, str)
+    ):
         return True, None
     return True, state
 

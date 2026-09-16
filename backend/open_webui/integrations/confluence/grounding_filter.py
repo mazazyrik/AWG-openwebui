@@ -36,7 +36,14 @@ from open_webui.integrations.confluence.scope_router import (
 )
 from open_webui.utils.memory import execute_awg_memory_command, get_awg_alias_expansions
 
-__all__ = ['Filter', 'STATE_KEY', 'grounded_answer', 'lookup_queries', 'needs_project_clarification']
+__all__ = [
+    'Filter',
+    'STATE_KEY',
+    'grounded_answer',
+    'lookup_queries',
+    'needs_project_clarification',
+    'project_list_fallback',
+]
 
 ALLOWED_SOURCE_HOST = 'conf.awg.ru'
 MAX_VALIDATED_ANSWER_CHARS = 32_768
@@ -58,6 +65,38 @@ COVERAGE_LIMITATIONS = {
     'По этим материалам нельзя подтвердить полный состав команды.',
 }
 CITATION_RE = re.compile(r'\[S([1-9]\d*)\]')
+PROJECT_LIST_INTENT_RE = re.compile(
+    r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b.*'
+    r'\b(?:проект\w*|кейс\w*|клиент\w*|projects?|cases?|clients?)\b'
+    r'|\b(?:проект\w*|кейс\w*|клиент\w*|projects?|cases?|clients?)\b.*'
+    r'\b(?:какие|перечисли|назови|покажи|список|what|which|list|show)\b',
+    re.IGNORECASE,
+)
+PROJECT_SECTION_RE = re.compile(
+    r'(?:#{1,6} )?'
+    r'(?P<emphasis>\*\*|__)?'
+    r'(?:(?:наши|подтвержд[её]нные) )?'
+    r'(?:проекты|кейсы|клиенты|projects|cases|clients)'
+    r'(?: (?:и|and|/) (?:проекты|кейсы|клиенты|projects|cases|clients))?'
+    r'(?(emphasis)(?P=emphasis))'
+    r'(?::|：)?',
+    re.IGNORECASE,
+)
+PROJECT_LABELED_LINE_RE = re.compile(
+    r'(?:[-*+] |[1-9]\d?[.)] )?'
+    r'(?:проект|кейс|клиент|project|case|client)\s*(?::|：|—|–|-)\s*(?P<name>.+)',
+    re.IGNORECASE,
+)
+PROJECT_LIST_ITEM_RE = re.compile(r'(?:[-*+] |[1-9]\d?[.)] )(?P<name>.+)')
+PROJECT_NAME_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9 &+./'()—–-]{1,79}")
+PROJECT_OUTER_QUOTE_RE = re.compile(r'(?:«(?P<russian>[^«»"]+)»|"(?P<ascii>[^«»"]+)")')
+PROJECT_INSTRUCTION_RE = re.compile(
+    r'\b(?:игнорир\w*|выполн\w*|инструкц\w*|команд\w*|запуст\w*|удал\w*|'
+    r'раскр\w*|отправ\w*|напиш\w*|ответ\w*|следу\w*|секрет\w*|токен\w*|парол\w*|'
+    r'ignore|execute|instruction|command|prompt|system|delete|reveal|send|write|respond|'
+    r'follow|secret|token|password)\b',
+    re.IGNORECASE,
+)
 NEUTRAL_LIST_LEAD_IN_RE = re.compile(
     r'(?:#{1,6} )?'
     r'(?P<emphasis>\*\*|__)?'
@@ -404,6 +443,104 @@ def grounded_answer(answer: str, sources: list[dict]) -> str:
     return '\n\n'.join(repaired)
 
 
+def _literal_project_name(value: str, *, section_item: bool) -> str | None:
+    name = value.strip()
+    emphasis = re.fullmatch(r'(?P<emphasis>\*\*|__)(?P<name>.+)(?P=emphasis)', name)
+    if emphasis:
+        name = emphasis['name'].strip()
+    markdown_link = re.fullmatch(r'\[([^\[\]\n]+)\]\((https?://[^()\s]+)\)', name)
+    if markdown_link:
+        try:
+            parsed_link = urlsplit(markdown_link[2])
+        except ValueError:
+            return None
+        if parsed_link.scheme != 'https' or parsed_link.netloc != ALLOWED_SOURCE_HOST:
+            return None
+        name = markdown_link[1].strip()
+    quoted_name = PROJECT_OUTER_QUOTE_RE.fullmatch(name)
+    if quoted_name:
+        name = (quoted_name['russian'] or quoted_name['ascii']).strip()
+    elif any(quote in name for quote in '«»"'):
+        return None
+    if (
+        not PROJECT_NAME_RE.fullmatch(name)
+        or URL_RE.search(name)
+        or CITATION_RE.search(name)
+        or PROJECT_INSTRUCTION_RE.search(name)
+        or len(name.split()) > 8
+        or sum(character.isalpha() for character in name) < 2
+    ):
+        return None
+    if section_item and not (name[0].isupper() or name[0].isdigit()):
+        return None
+    if name.casefold() in {
+        'проект',
+        'проекты',
+        'кейс',
+        'кейсы',
+        'клиент',
+        'клиенты',
+        'project',
+        'projects',
+        'case',
+        'cases',
+        'client',
+        'clients',
+    }:
+        return None
+    return name
+
+
+def _project_candidates(text: str):
+    in_project_section = False
+    section_lines = 0
+    for raw_line in text[:8000].splitlines():
+        line = raw_line.strip()
+        if PROJECT_SECTION_RE.fullmatch(line):
+            in_project_section = True
+            section_lines = 0
+            continue
+        if in_project_section:
+            section_lines += 1
+            if section_lines > 20 or (line.startswith('#') and not PROJECT_LIST_ITEM_RE.fullmatch(line)):
+                in_project_section = False
+        match = PROJECT_LABELED_LINE_RE.fullmatch(line)
+        if match is not None:
+            yield match['name'], False
+            continue
+        if in_project_section:
+            match = PROJECT_LIST_ITEM_RE.fullmatch(line)
+            if match is not None:
+                yield match['name'], True
+
+
+def project_list_fallback(question: str, sources: list[dict]) -> str | None:
+    """Build a cited project list from explicit literal source entries."""
+    if PROJECT_LIST_INTENT_RE.search(question) is None:
+        return None
+    entries: list[tuple[str, dict]] = []
+    seen = set()
+    for source in sources[:4]:
+        text = source.get('text')
+        if not isinstance(text, str):
+            continue
+        for value, section_item in _project_candidates(text):
+            name = _literal_project_name(value, section_item=section_item)
+            if name is None or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            entries.append((name, source))
+            if len(entries) == 12:
+                break
+        if len(entries) == 12:
+            break
+    if not entries:
+        return None
+    candidate = '\n'.join(f'- {name} [{source["id"]}] {source["url"]}' for name, source in entries)
+    validated = grounded_answer(candidate, sources)
+    return validated if validated != CITATION_FAILURE else None
+
+
 def log_citation_failure(answer: str, sources: list[dict], result: str) -> None:
     """Describe citation failure without retaining source or answer values."""
     if result != CITATION_FAILURE:
@@ -445,6 +582,10 @@ def finalize_awg_answer(state: AwgRequestState | None, provider_answer: str) -> 
         return UNKNOWN
     sources = list(state.sources)
     answer = grounded_answer(provider_answer, sources)
+    if answer in {UNKNOWN, CITATION_FAILURE} and state.grounded_fallback is not None:
+        fallback = grounded_answer(state.grounded_fallback, sources)
+        if fallback != CITATION_FAILURE:
+            answer = fallback
     if len(answer) > MAX_VALIDATED_ANSWER_CHARS:
         answer = CITATION_FAILURE
     log_citation_failure(provider_answer, sources, answer)
@@ -573,6 +714,7 @@ class Filter:
         unavailable: bool = False,
         unavailable_reason: str | None = None,
         deterministic_answer: str | None = None,
+        grounded_fallback: str | None = None,
     ) -> AwgRequestState:
         provenance = tuple(
             {
@@ -598,6 +740,7 @@ class Filter:
             client_stream=client_stream,
             provider_required=decision.route == 'confluence_grounded',
             deterministic_answer=deterministic_answer,
+            grounded_fallback=grounded_fallback,
         )
 
     def _append_policy(self, body: dict, directive: str) -> None:
@@ -803,6 +946,7 @@ class Filter:
             self._log_route(state, lookup=False)
             return body
         sources, unavailable, unavailable_reason = await self._grounded_sources(queries)
+        fallback = project_list_fallback(question, sources) if not unavailable else None
         state = self._state(
             decision,
             model_id=model_id,
@@ -812,6 +956,7 @@ class Filter:
             sources=sources,
             unavailable=unavailable,
             unavailable_reason=unavailable_reason,
+            grounded_fallback=fallback,
         )
         set_awg_request_state(__request__, model_id, invocation_id, state)
         context = (
