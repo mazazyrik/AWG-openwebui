@@ -85,6 +85,37 @@ def test_attested_response_kind_must_match_route_contract():
     assert get_awg_request_state(request, MODEL, metadata) == (True, None)
 
 
+@pytest.mark.parametrize(
+    ('grounded_fallback_mode', 'grounded_fallback'),
+    [
+        ('unknown', 'safe fallback'),
+        ('forced_navigation', None),
+    ],
+)
+def test_attested_state_rejects_invalid_grounded_fallback_contract(grounded_fallback_mode, grounded_fallback):
+    request, metadata, invocation_id = attested_request()
+    invalid = make_state(
+        invocation_id,
+        grounded_fallback=grounded_fallback,
+        grounded_fallback_mode=grounded_fallback_mode,
+    )
+    set_awg_request_state(request, MODEL['id'], invocation_id, invalid)
+
+    assert get_awg_request_state(request, MODEL, metadata) == (True, None)
+
+
+def test_attested_state_accepts_forced_navigation_with_fallback():
+    request, metadata, invocation_id = attested_request()
+    valid = make_state(
+        invocation_id,
+        grounded_fallback='safe fallback',
+        grounded_fallback_mode='forced_navigation',
+    )
+    set_awg_request_state(request, MODEL['id'], invocation_id, valid)
+
+    assert get_awg_request_state(request, MODEL, metadata) == (True, valid)
+
+
 def test_duplicate_model_invocations_are_independent_and_cleanup_exact():
     request = SimpleNamespace(state=SimpleNamespace())
     first_metadata = {}
