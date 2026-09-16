@@ -19,11 +19,15 @@ MemoryOperation = Literal['add', 'remove', 'list']
 MemoryKind = Literal['alias', 'preference']
 
 AWG_MARKER_RE = re.compile(r'\b(?:awg|avg|авг)(?:\s+gpt)?\b', re.IGNORECASE)
-GENERIC_CONTEXT_RE = re.compile(
-    r'\b(?:у\s+нас|у\s+них|наш(?:а|и|е|его|ей|ему|им|их)?|это(?:т|й|му|го)?|там|их|'
-    r'our|ours|this|that|there|their|them)\b',
+UNANCHORED_PRONOUN_RE = re.compile(
+    r'\b(?:у\s+них|они|их|там|them|their|they|there)\b',
     re.IGNORECASE,
 )
+CORPORATE_POSSESSIVE_RE = re.compile(
+    r'\b(?:у\s+нас|наш(?:а|и|е|его|ей|ему|им|их)?|our|ours)\b',
+    re.IGNORECASE,
+)
+UNRELATED_COMPANY_RE = re.compile(r'\b(?:яндекс|yandex)\b', re.IGNORECASE)
 GREETING_RE = re.compile(
     r'^\s*(?:(?:привет|здравствуй(?:те)?|доброе\s+'
     r'(?:утро|день|вечер)|hi|hello|hey)[!,.\s]*)+'
@@ -165,13 +169,13 @@ def parse_memory_command(question: str) -> MemoryCommand | None:
     return MemoryCommand('add')
 
 
-def _has_prior_awg_anchor(messages: list[dict], approved_aliases: tuple[str, ...]) -> bool:
+def _has_prior_awg_anchor(messages: list[dict]) -> bool:
     user_messages = [
         message['content']
         for message in messages
         if message.get('role') == 'user' and isinstance(message.get('content'), str)
     ][-5:-1]
-    return any(AWG_MARKER_RE.search(text) or _contains_alias(text, approved_aliases) for text in user_messages)
+    return any(AWG_MARKER_RE.search(text) for text in user_messages)
 
 
 def needs_project_clarification(
@@ -179,14 +183,14 @@ def needs_project_clarification(
     approved_aliases: tuple[str, ...] = (),
     personal_alias: bool = False,
 ) -> bool:
-    """Require a concrete AWG anchor for relative or generic project questions."""
+    """Require an AWG anchor for unresolved third-person references."""
     question = latest_user_text(messages)
     if not question:
         return False
     if AWG_MARKER_RE.search(question) or _contains_alias(question, approved_aliases) or personal_alias:
         return False
-    prior_anchor = _has_prior_awg_anchor(messages, approved_aliases)
-    if GENERIC_CONTEXT_RE.search(question):
+    prior_anchor = _has_prior_awg_anchor(messages)
+    if UNANCHORED_PRONOUN_RE.search(question):
         return not prior_anchor
     return not prior_anchor and bool(
         re.fullmatch(
@@ -195,6 +199,29 @@ def needs_project_clarification(
             re.IGNORECASE,
         )
     )
+
+
+def _grounded_scope_decision(
+    messages: list[dict],
+    question: str,
+    approved_aliases: tuple[str, ...],
+    personal_alias: bool,
+) -> str | None:
+    explicit_awg = bool(AWG_MARKER_RE.search(question))
+    approved_alias = _contains_alias(question, approved_aliases)
+    if explicit_awg:
+        return 'awg_marker'
+    if personal_alias:
+        return 'personal_alias'
+    if CORPORATE_POSSESSIVE_RE.search(question):
+        return 'awg_possessive_intent'
+    if _has_prior_awg_anchor(messages):
+        return 'confirmed_awg_continuation'
+    if UNRELATED_COMPANY_RE.search(question):
+        return None
+    if approved_alias:
+        return 'approved_alias'
+    return None
 
 
 def route_request(
@@ -222,18 +249,7 @@ def route_request(
     if needs_project_clarification(messages, approved_aliases, personal_alias):
         return RouteDecision('clarification', 'missing_awg_anchor')
 
-    explicit_awg = bool(AWG_MARKER_RE.search(question))
-    approved_alias = _contains_alias(question, approved_aliases)
-    prior_anchor = _has_prior_awg_anchor(messages, approved_aliases)
-    grounded_intent = bool(GROUNDED_INTENT_RE.search(question))
-    if explicit_awg or approved_alias or personal_alias or (grounded_intent and prior_anchor):
-        if explicit_awg:
-            scope_decision = 'awg_marker'
-        elif approved_alias:
-            scope_decision = 'approved_alias'
-        elif personal_alias:
-            scope_decision = 'personal_alias'
-        else:
-            scope_decision = 'confirmed_awg_continuation'
+    scope_decision = _grounded_scope_decision(messages, question, approved_aliases, personal_alias)
+    if scope_decision is not None:
         return RouteDecision('confluence_grounded', scope_decision)
     return RouteDecision('out_of_scope', 'no_confirmed_awg_context')

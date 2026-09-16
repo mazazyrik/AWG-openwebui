@@ -8,18 +8,19 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi.responses import JSONResponse
+from starlette.responses import StreamingResponse
+
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import (
     get_output_text,
     openai_chat_chunk_message_template,
     openai_chat_completion_message_template,
 )
-from starlette.responses import StreamingResponse
 
 STATE_KEY = 'awg_confluence_grounding'
 ATTESTATION_KEY = 'awg_confluence_attestations'
 INVOCATION_KEY = 'awg_confluence_invocations'
-STATE_VERSION = 2
+STATE_VERSION = 3
 MAX_PROVIDER_RESPONSE_BYTES = 65_536
 MAX_PROVIDER_RESPONSE_CHARS = 16_384
 
@@ -32,6 +33,23 @@ Route = Literal[
     'clarification',
     'out_of_scope',
 ]
+ResponseKind = Literal[
+    'conversational',
+    'clarification',
+    'policy_refusal',
+    'grounded_fact',
+    'grounded_partial',
+    'grounded_no_evidence',
+]
+ROUTE_RESPONSE_KINDS: dict[Route, ResponseKind] = {
+    'assistant_meta': 'conversational',
+    'memory_command': 'conversational',
+    'greeting_help': 'conversational',
+    'corporate_profile': 'conversational',
+    'confluence_grounded': 'grounded_fact',
+    'clarification': 'clarification',
+    'out_of_scope': 'policy_refusal',
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +61,7 @@ class AwgRequestState:
     filter_id: str
     profile_version: str
     prompt_hash: str
+    response_kind: ResponseKind
     sources: tuple[dict, ...]
     memory_operation: str | None
     scope_decision: str
@@ -52,6 +71,12 @@ class AwgRequestState:
     provider_required: bool
     deterministic_answer: str | None
     grounded_fallback: str | None = None
+
+
+@dataclass(frozen=True)
+class AwgFinalAnswer:
+    text: str
+    response_kind: ResponseKind
 
 
 @dataclass
@@ -202,7 +227,9 @@ def get_awg_request_state(
         or state.filter_id not in filter_ids
     ):
         return True, None
-    if state.provider_required != (state.route == 'confluence_grounded'):
+    if state.response_kind != ROUTE_RESPONSE_KINDS.get(state.route):
+        return True, None
+    if state.provider_required != (state.response_kind == 'grounded_fact'):
         return True, None
     if state.provider_required == (state.deterministic_answer is not None):
         return True, None

@@ -32,6 +32,7 @@ def make_state(invocation_id, **overrides):
         filter_id=FILTER_ID,
         profile_version='2026-09-16.1',
         prompt_hash='hash',
+        response_kind='grounded_fact',
         sources=(),
         memory_operation=None,
         scope_decision='test',
@@ -60,6 +61,7 @@ def attested_request(*, stream=False):
         make_state('wrong'),
         replace(make_state('wrong'), state_version=STATE_VERSION + 1),
         replace(make_state('wrong'), filter_id='other-filter'),
+        replace(make_state('wrong'), response_kind='conversational'),
     ],
 )
 def test_attested_invalid_state_fails_closed(invalid):
@@ -74,6 +76,13 @@ def test_client_metadata_spoof_cannot_create_attestation():
     request = SimpleNamespace(state=SimpleNamespace())
     metadata = {'awg_invocation_id': 'spoof', 'filter_ids': [FILTER_ID]}
     assert get_awg_request_state(request, MODEL, metadata) == (False, None)
+
+
+def test_attested_response_kind_must_match_route_contract():
+    request, metadata, invocation_id = attested_request()
+    invalid = make_state(invocation_id, response_kind='conversational')
+    set_awg_request_state(request, MODEL['id'], invocation_id, invalid)
+    assert get_awg_request_state(request, MODEL, metadata) == (True, None)
 
 
 def test_duplicate_model_invocations_are_independent_and_cleanup_exact():
