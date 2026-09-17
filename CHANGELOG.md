@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-09-17
+
+### Fixed
+
+- Grounded Kратно delivery questions in their canonical Confluence page, with
+  restriction checks before the source is used.
+- Preserved a previously grounded project across follow-up questions while
+  clearing that context when a different project is named explicitly.
+- Kept existing version 1 Confluence profiles compatible when no canonical
+  page routes are configured.
+
 ## [0.11.4] - 2026-09-15
 
 ### Added
