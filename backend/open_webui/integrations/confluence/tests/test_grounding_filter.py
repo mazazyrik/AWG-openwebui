@@ -143,6 +143,28 @@ def test_general_noncorporate_work_is_allowed_without_evidence():
 
 
 @pytest.mark.parametrize(
+    ('question', 'scope'),
+    [
+        ('Привет!', 'hermes_native_greeting_help'),
+        ('У тебя есть Hermes под капотом?', 'hermes_native_assistant_meta'),
+        ('Расскажи рецепт пиццы', 'hermes_native_out_of_scope'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_hermes_handles_every_non_grounded_route_without_confluence_lookup(monkeypatch, question, scope):
+    instance = Filter()
+    instance._grounded_sources = AsyncMock()
+    request = SimpleNamespace(state=SimpleNamespace())
+    monkeypatch.setattr('open_webui.integrations.confluence.grounding_filter.is_hermes_model', lambda _: True)
+
+    await attached_inlet(instance, {'messages': messages(question)}, request)
+
+    state = next(iter(getattr(request.state, STATE_KEY).states.values()))
+    assert (state.route, state.scope_decision, state.provider_required) == ('general_work', scope, True)
+    instance._grounded_sources.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
     'answer',
     [
         'Проектом руководит Иван.',
@@ -956,6 +978,20 @@ def test_internal_yandex_possessive_stays_grounded():
         approved_aliases=('Яндекс', 'YANDEX'),
     )
     assert (decision.route, decision.scope_decision) == ('confluence_grounded', 'awg_possessive_intent')
+
+
+@pytest.mark.parametrize(
+    'question',
+    [
+        'окей, расскажи мне про проект яндекс и майндбокс, что знаешь?',
+        'Расскажи про проект Яндекс',
+        'Tell me about the Yandex project',
+    ],
+)
+def test_explicit_project_reference_without_awg_marker_stays_grounded(question):
+    decision = route_request(messages(question), approved_aliases=('Яндекс', 'Mindbox'))
+
+    assert (decision.route, decision.scope_decision) == ('confluence_grounded', 'awg_project_reference')
 
 
 def test_yandex_follow_up_after_awg_anchor_stays_grounded():
