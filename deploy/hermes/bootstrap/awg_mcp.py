@@ -37,13 +37,17 @@ def _request(path: str, *, method: str = 'GET', payload: dict | None = None, bod
 @mcp.tool()
 def search_confluence(query: str, limit: int = 6) -> dict:
     """Search the read-only AWG Confluence index."""
-    return _request('/api/v1/integrations/hermes/tools/search_confluence', method='POST', payload={'query': query, 'limit': limit})
+    return _request(
+        '/api/v1/integrations/hermes/tools/search_confluence', method='POST', payload={'query': query, 'limit': limit}
+    )
 
 
 @mcp.tool()
 def read_attachment(file_id: str) -> str:
     """Download an authorized OpenWebUI attachment into this workspace."""
-    metadata = _request('/api/v1/integrations/hermes/tools/read_attachment', method='POST', payload={'file_id': file_id})
+    metadata = _request(
+        '/api/v1/integrations/hermes/tools/read_attachment', method='POST', payload={'file_id': file_id}
+    )
     destination = (WORKSPACE / 'attachments' / Path(metadata['filename']).name).resolve()
     if not destination.is_relative_to(WORKSPACE):
         raise ValueError('Invalid attachment path')
