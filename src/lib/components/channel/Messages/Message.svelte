@@ -582,7 +582,7 @@
 														if (idx === 3 && total > 4) {
 															return (
 																acc +
-																` ${$i18n.t('and {{COUNT}} others', {
+																` ${$i18n.t('and {{COUNT}} more', {
 																	COUNT: total - 3
 																})}`
 															);

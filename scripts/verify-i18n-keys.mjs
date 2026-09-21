@@ -7,12 +7,21 @@ const changedFiles = fs.existsSync(changedFilesPath)
 	? fs.readFileSync(changedFilesPath, 'utf8').split('\n').filter(Boolean)
 	: [];
 const missing = new Set();
-const pattern = /\$i18n\.t\(\s*['"]([^'"]+)['"]/g;
+const patterns = [/\$i18n\.t\(\s*'((?:\\.|[^'\\])*)'/g, /\$i18n\.t\(\s*"((?:\\.|[^"\\])*)"/g];
+const translationKeys = new Set(Object.keys(translations));
+const pluralKeys = new Set(
+	[...translationKeys].map((key) => key.replace(/_(?:zero|one|two|few|many|other)$/, ''))
+);
 
-for (const path of changedFiles.filter((path) => /\.(?:js|ts|svelte)$/.test(path) && fs.existsSync(path))) {
+for (const path of changedFiles.filter(
+	(path) => /\.(?:js|ts|svelte)$/.test(path) && fs.existsSync(path)
+)) {
 	const source = fs.readFileSync(path, 'utf8');
-	for (const match of source.matchAll(pattern)) {
-		if (!(match[1] in translations)) missing.add(match[1]);
+	for (const pattern of patterns) {
+		for (const match of source.matchAll(pattern)) {
+			const key = match[1].replace(/\\(['"\\])/g, '$1');
+			if (!translationKeys.has(key) && !pluralKeys.has(key)) missing.add(key);
+		}
 	}
 }
 
