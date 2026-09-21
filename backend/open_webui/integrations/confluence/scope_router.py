@@ -13,6 +13,7 @@ Route = Literal[
     'corporate_profile',
     'confluence_grounded',
     'clarification',
+    'general_work',
     'out_of_scope',
 ]
 MemoryOperation = Literal['add', 'remove', 'list']
@@ -84,6 +85,20 @@ POLICY_ATTACK_RE = re.compile(
     r'игнорируй\s+(?:все\s+)?предыдущие\s+инструкции)\b',
     re.IGNORECASE,
 )
+GENERAL_WORK_RE = re.compile(
+    r'\b(?:создай|сделай|подготовь|напиши|перепиши|отредактируй|проанализируй|'
+    r'суммаризируй|резюмируй|переведи|сравни|посчитай|объясни|оформи|файл|'
+    r'документ|таблиц\w*|презентац\w*|pdf|docx|xlsx|pptx|код|скрипт|'
+    r'create|make|prepare|write|rewrite|edit|analy[sz]e|summari[sz]e|translate|'
+    r'compare|calculate|explain|document|spreadsheet|presentation|code|script)\b',
+    re.IGNORECASE,
+)
+SAFE_GENERAL_WORK_RE = re.compile(
+    r'\b(?:переведи|перепиши|отредактируй|исправь\s+(?:текст|ошибк)|посчитай|вычисли|'
+    r'оформи|конвертируй|преобразуй|translate|rewrite|edit\s+(?:this|the)\s+text|'
+    r'calculate|compute|format|convert)\b',
+    re.IGNORECASE,
+)
 ALIAS_ADD_PATTERNS = (
     re.compile(
         r'(?:запомни|сохрани)(?:,|\s)+(?:что\s+)?(?P<key>[^,.;:\n]{1,80}?)\s+'
@@ -135,9 +150,7 @@ def latest_user_text(messages: list[dict]) -> str:
         (
             message['content'].strip()[:2000]
             for message in reversed(messages)
-            if message.get('role') == 'user'
-            and isinstance(message.get('content'), str)
-            and message['content'].strip()
+            if message.get('role') == 'user' and isinstance(message.get('content'), str) and message['content'].strip()
         ),
         '',
     )
@@ -215,6 +228,8 @@ def _grounded_scope_decision(
     approved_alias = _contains_alias(question, approved_aliases)
     if explicit_awg:
         return 'awg_marker'
+    if re.search(r'\bconfluence\b', question, re.IGNORECASE):
+        return 'explicit_confluence'
     if personal_alias:
         return 'personal_alias'
     if CORPORATE_POSSESSIVE_RE.search(question):
@@ -266,4 +281,7 @@ def route_request(
     scope_decision = _grounded_scope_decision(messages, question, approved_aliases, personal_alias)
     if scope_decision is not None:
         return RouteDecision('confluence_grounded', scope_decision)
+    if GENERAL_WORK_RE.search(question) and not UNRELATED_COMPANY_RE.search(question):
+        scope = 'general_work_safe_transform' if SAFE_GENERAL_WORK_RE.search(question) else 'general_work_task'
+        return RouteDecision('general_work', scope)
     return RouteDecision('out_of_scope', 'no_confirmed_awg_context')

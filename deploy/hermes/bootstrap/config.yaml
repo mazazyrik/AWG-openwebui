@@ -1,0 +1,39 @@
+model:
+  default: awg-qwen
+  provider: custom
+  base_url: '${OPENAI_BASE_URL}'
+  context_length: 65536
+
+toolsets:
+  - terminal
+  - file
+  - skills
+  - memory
+  - mcp-awg
+
+terminal:
+  backend: local
+  cwd: /workspace
+  timeout: 180
+
+gateway:
+  api_server:
+    enabled: true
+    host: 0.0.0.0
+    port: 8642
+    model_name: awg-qwen
+    max_concurrent_runs: 1
+    history_tool_output_max_chars: 12000
+
+mcp_servers:
+  awg:
+    command: python
+    args: [/opt/awg/awg_mcp.py]
+    enabled: true
+    tools:
+      include: [search_confluence, read_attachment, publish_artifact, stage_plugin]
+      resources: false
+      prompts: false
+
+runtime:
+  nofile_soft_limit: 4096

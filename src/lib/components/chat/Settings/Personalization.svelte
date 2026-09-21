@@ -11,7 +11,14 @@
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import ExperimentalBadge from '$lib/components/common/ExperimentalBadge.svelte';
 	import MemoryModal from './Personalization/MemoryModal.svelte';
-	import { deleteMemoriesByUserId, deleteMemoryById, getMemories } from '$lib/apis/memories';
+	import {
+		clearHermesMemories,
+		deleteHermesMemory,
+		deleteMemoriesByUserId,
+		deleteMemoryById,
+		getHermesMemories,
+		getMemories
+	} from '$lib/apis/memories';
 	import { toast } from 'svelte-sonner';
 	import UserSettingRow from './UserSettingRow.svelte';
 	import UserSettingSection from './UserSettingSection.svelte';
@@ -46,15 +53,26 @@
 		type?: string;
 		path?: string;
 		updated_at?: number;
+		hermes_name?: string;
 	};
 
 	const loadMemories = async () => {
 		loadingMemories = true;
-		memories =
+		const nativeMemories =
 			(await getMemories(localStorage.token).catch((error) => {
 				toast.error(`${error}`);
 				return [];
 			})) ?? [];
+		const hermesMemories =
+			(await getHermesMemories(localStorage.token).catch(() => []))?.map(
+				(memory: { name: string; content: string }) => ({
+					id: `hermes:${memory.name}`,
+					content: memory.content,
+					type: 'hermes',
+					hermes_name: memory.name
+				})
+			) ?? [];
+		memories = [...nativeMemories, ...hermesMemories];
 		loadingMemories = false;
 	};
 
@@ -69,14 +87,15 @@
 	};
 
 	let onClearConfirmed = async () => {
-		const res = await deleteMemoriesByUserId(localStorage.token).catch((error) => {
-			toast.error(`${error}`);
-			return null;
-		});
-
-		if (res && memories.length > 0) {
+		const [nativeResult, hermesResult] = await Promise.allSettled([
+			deleteMemoriesByUserId(localStorage.token),
+			clearHermesMemories(localStorage.token)
+		]);
+		await loadMemories();
+		if (nativeResult.status === 'fulfilled' && hermesResult.status === 'fulfilled') {
 			toast.success($i18n.t('Memory cleared successfully'));
-			memories = [];
+		} else {
+			toast.error($i18n.t('Some memories could not be cleared'));
 		}
 		showClearConfirmDialog = false;
 	};
@@ -240,13 +259,15 @@
 											{memory.content}
 										</div>
 										<div class="flex shrink-0 items-center justify-end gap-2">
-											<button
-												type="button"
-												class="{actionButtonClass} hover:underline"
-												on:click={() => editMemory(memory)}
-											>
-												{$i18n.t('Edit')}
-											</button>
+											{#if memory.type !== 'hermes'}
+												<button
+													type="button"
+													class="{actionButtonClass} hover:underline"
+													on:click={() => editMemory(memory)}
+												>
+													{$i18n.t('Edit')}
+												</button>
+											{/if}
 											<button
 												type="button"
 												class="{actionButtonClass} hover:underline"
@@ -291,7 +312,11 @@
 	on:confirm={async () => {
 		if (!selectedMemory) return;
 
-		const res = await deleteMemoryById(localStorage.token, selectedMemory.id).catch((error) => {
+		const res = await (
+			selectedMemory.type === 'hermes' && selectedMemory.hermes_name
+				? deleteHermesMemory(localStorage.token, selectedMemory.hermes_name)
+				: deleteMemoryById(localStorage.token, selectedMemory.id)
+		).catch((error) => {
 			toast.error(`${error}`);
 			return null;
 		});
