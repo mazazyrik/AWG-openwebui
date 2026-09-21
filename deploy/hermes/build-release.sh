@@ -7,12 +7,16 @@ source_checkout=${1:?Hermes source checkout is required}
 upstream_ref=${2:?Upstream registry reference is required}
 runtime_ref=${3:?Runtime registry reference is required}
 manifest=${4:-release-manifest.generated.json}
+package_source='https://github.com/mazazyrik/AWG-openwebui'
 
 test "$(git -C "$source_checkout" rev-parse HEAD)" = "$commit"
 test -z "$(git -C "$source_checkout" status --porcelain)"
 case "$upstream_ref" in *@*) exit 2 ;; esac
 
 docker buildx build \
+  --label "org.opencontainers.image.source=$package_source" \
+  --label 'com.awg.hermes.upstream-source=https://github.com/NousResearch/hermes-agent' \
+  --label "com.awg.hermes.upstream-revision=$commit" \
   --provenance=mode=max \
   --sbom=true \
   --push \
@@ -29,6 +33,7 @@ docker buildx build \
   --build-arg "HERMES_BASE_IMAGE=$base_image" \
   --build-arg "HERMES_RELEASE=$release" \
   --build-arg "HERMES_UPSTREAM_COMMIT=$commit" \
+  --build-arg "AWG_PACKAGE_SOURCE=$package_source" \
   --provenance=mode=max \
   --sbom=true \
   --push \
