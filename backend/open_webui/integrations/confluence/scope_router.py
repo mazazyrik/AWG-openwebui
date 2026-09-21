@@ -77,6 +77,20 @@ GROUNDED_INTENT_RE = re.compile(
     r'polic(?:y|ies)|meetings?|status(?:es)?|confluence)\b',
     re.IGNORECASE,
 )
+DELIVERY_QUESTION_RE = re.compile(
+    r'\b(?:какую|какие|что|чем|what|which)\b.{0,80}'
+    r'\b(?:разработк\w*|внедрен\w*|интеграц\w*|геймификац\w*|релиз\w*|'
+    r'development|implementation|integration|gamification|releases?)\b.{0,80}'
+    r'\b(?:дела\w*|разрабатыва\w*|внедря\w*|интегрир\w*|реализу\w*|выпуска\w*|'
+    r'develop\w*|implement\w*|integrat\w*|deliver\w*|releas\w*)\b',
+    re.IGNORECASE,
+)
+KRATNO_DELIVERY_QUESTION_RE = re.compile(
+    r'^\s*какую\s+разработку\s+по\s+геймификации\s+мы\s+делали\s*[?!.]*\s*$',
+    re.IGNORECASE,
+)
+KRATNO_ALIAS_RE = re.compile(r'\b(?:кратно|servity)\b', re.IGNORECASE)
+OTHER_PROJECT_RE = re.compile(r'\b(?:спортмастер\w*|sportmaster\w*|яндекс\w*|yandex)\b', re.IGNORECASE)
 POLICY_ATTACK_RE = re.compile(
     r'\b(?:покажи|раскрой|выведи|повтори|пришли|show|reveal|print|repeat)\b.{0,40}'
     r'\b(?:системн\w*\s+(?:промпт|инструкц\w*)|system\s+prompt|'
@@ -195,6 +209,35 @@ def _has_prior_awg_anchor(messages: list[dict]) -> bool:
     return any(AWG_MARKER_RE.search(text) for text in user_messages)
 
 
+def _has_prior_kratno_anchor(messages: list[dict]) -> bool:
+    user_messages = [
+        message['content']
+        for message in messages
+        if message.get('role') == 'user' and isinstance(message.get('content'), str)
+    ]
+    if len(user_messages) < 2:
+        return False
+    previous_question = user_messages[-2]
+    return bool(
+        KRATNO_ALIAS_RE.search(previous_question)
+        or KRATNO_DELIVERY_QUESTION_RE.fullmatch(previous_question)
+    )
+
+
+def _is_kratno_follow_up(messages: list[dict], question: str) -> bool:
+    return not OTHER_PROJECT_RE.search(question) and _has_prior_kratno_anchor(messages) and bool(
+        GROUNDED_INTENT_RE.search(question) or DELIVERY_QUESTION_RE.search(question)
+    )
+
+
+def _kratno_scope_decision(messages: list[dict], question: str) -> str | None:
+    if KRATNO_ALIAS_RE.search(question) or KRATNO_DELIVERY_QUESTION_RE.fullmatch(question):
+        return 'awg_kratno_delivery_question'
+    if _is_kratno_follow_up(messages, question):
+        return 'awg_kratno_delivery_question'
+    return None
+
+
 def needs_project_clarification(
     messages: list[dict],
     approved_aliases: tuple[str, ...] = (),
@@ -205,6 +248,8 @@ def needs_project_clarification(
     if not question:
         return False
     if AWG_MARKER_RE.search(question) or _contains_alias(question, approved_aliases) or personal_alias:
+        return False
+    if _is_kratno_follow_up(messages, question):
         return False
     prior_anchor = _has_prior_awg_anchor(messages)
     if UNANCHORED_PRONOUN_RE.search(question):
@@ -226,6 +271,9 @@ def _grounded_scope_decision(
 ) -> str | None:
     explicit_awg = bool(AWG_MARKER_RE.search(question))
     approved_alias = _contains_alias(question, approved_aliases)
+    kratno_scope_decision = _kratno_scope_decision(messages, question)
+    if kratno_scope_decision is not None:
+        return kratno_scope_decision
     if explicit_awg:
         return 'awg_marker'
     if re.search(r'\bconfluence\b', question, re.IGNORECASE):
@@ -234,6 +282,12 @@ def _grounded_scope_decision(
         return 'personal_alias'
     if CORPORATE_POSSESSIVE_RE.search(question):
         return 'awg_possessive_intent'
+    if (
+        CORPORATE_FIRST_PERSON_RE.search(question)
+        and DELIVERY_QUESTION_RE.search(question)
+        and not UNRELATED_COMPANY_RE.search(question)
+    ):
+        return 'awg_first_person_delivery_question'
     if (
         CORPORATE_FIRST_PERSON_RE.search(question)
         and GROUNDED_INTENT_RE.search(question)

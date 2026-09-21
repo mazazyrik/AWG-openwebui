@@ -49,7 +49,7 @@
 	>
 		<div class="flex h-full max-h-full min-h-full">
 			<div
-				class="w-full bg-white dark:bg-gray-900 z-40 pointer-events-auto overflow-hidden scrollbar-hidden flex flex-col"
+				class="w-full bg-surface z-40 pointer-events-auto overflow-hidden scrollbar-hidden flex flex-col"
 			>
 				<slot />
 			</div>

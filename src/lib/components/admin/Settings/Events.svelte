@@ -393,7 +393,7 @@
 	});
 </script>
 
-<Modal bind:show={showWebhookModal} size="sm" className="bg-white dark:bg-gray-900 rounded-4xl">
+<Modal bind:show={showWebhookModal} size="sm" className="bg-surface rounded-4xl">
 	<div>
 		<div class="flex justify-between dark:text-gray-100 px-4 pt-3 pb-1">
 			<h1 class="text-sm font-medium self-center">
@@ -527,7 +527,7 @@
 
 								{#if targetQuery.trim() && (targetGroupResults.length > 0 || targetUserResults.length > 0)}
 									<div
-										class="absolute z-10 mt-1 w-full rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-850 shadow-lg py-1 max-h-48 overflow-y-auto"
+										class="absolute z-10 mt-1 w-full rounded-lg bg-surface border border-gray-100 dark:border-gray-850 shadow-lg py-1 max-h-48 overflow-y-auto"
 									>
 										{#each targetGroupResults as group}
 											<button

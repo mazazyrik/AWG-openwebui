@@ -730,12 +730,7 @@
 	export let placeholder = '';
 
 	type ModelCapability =
-		| 'vision'
-		| 'file_upload'
-		| 'web_search'
-		| 'image_generation'
-		| 'code_interpreter'
-		| 'terminal';
+		'vision' | 'file_upload' | 'web_search' | 'image_generation' | 'code_interpreter' | 'terminal';
 	type ModelCapabilitiesById = Record<string, Partial<Record<ModelCapability, boolean>>>;
 
 	let modelCapabilitiesById: ModelCapabilitiesById = {};
@@ -1769,7 +1764,7 @@
 						<!-- Queued messages display -->
 						{#if messageQueue.length > 0}
 							<div
-								class="mb-1 mx-2 py-0.5 px-1.5 rounded-2xl bg-white dark:bg-gray-900/60 border border-gray-100 dark:border-gray-800/50 overflow-x-hidden overflow-y-auto max-h-[25vh]"
+								class="mb-1 mx-2 py-0.5 px-1.5 rounded-2xl bg-surface/60 border border-gray-100 dark:border-gray-800/50 overflow-x-hidden overflow-y-auto max-h-[25vh]"
 							>
 								{#each messageQueue as queuedMessage (queuedMessage.id)}
 									<QueuedMessageItem
@@ -2644,7 +2639,7 @@
 												<!-- {$i18n.t('Call')} -->
 												<Tooltip content={$i18n.t('Voice mode')}>
 													<button
-														class=" bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full p-[0.3125rem] self-center"
+														class=" bg-brand text-brand-foreground hover:opacity-90 transition rounded-full p-[0.3125rem] self-center"
 														type="button"
 														on:click={async () => {
 															if (selectedModels.length > 1) {
@@ -2712,7 +2707,7 @@
 													<button
 														id="send-message-button"
 														class="{!(prompt === '' && files.length === 0) || uploadPending
-															? 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100 '
+															? 'bg-brand text-brand-foreground hover:opacity-90 '
 															: 'text-white bg-gray-200 dark:text-gray-900 dark:bg-gray-700 disabled'} transition rounded-full p-[0.3125rem] self-center"
 														type="submit"
 														disabled={(prompt === '' && files.length === 0) || uploadPending}

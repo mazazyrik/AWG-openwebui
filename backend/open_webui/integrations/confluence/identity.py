@@ -16,6 +16,7 @@ PROMPT_PATH = Path(__file__).with_name('manager_prompt.md')
 MAX_PROFILE_BYTES = 32_768
 MAX_PROMPT_BYTES = 32_768
 PROFILE_SCHEMA_VERSION = 1
+CANONICAL_PAGE_TRIGGERS = {'awg_kratno_delivery_question'}
 PROMPT_MARKER = 'AWG_GPT_POLICY_BEGIN'
 RESPONSE_KEYS = {
     'assistant_meta',
@@ -91,6 +92,17 @@ class RetrievalAlias:
 
 
 @dataclass(frozen=True)
+class CanonicalPageRoute:
+    trigger: str
+    page_id: str
+    title: str
+    source_url: str
+    owner: str
+    as_of: str
+    provenance: str
+
+
+@dataclass(frozen=True)
 class AwgProfile:
     schema_version: int
     identity_version: str
@@ -100,6 +112,7 @@ class AwgProfile:
     company_name: str
     approved_context: tuple[CorporateFact, ...]
     retrieval_aliases: tuple[RetrievalAlias, ...]
+    canonical_page_routes: tuple[CanonicalPageRoute, ...]
     supported_scope: tuple[str, ...]
     responses: dict[str, str]
 
@@ -109,11 +122,19 @@ def contains_untrusted_instruction(value: str) -> bool:
     return any(pattern.search(value) for pattern in INSTRUCTION_PATTERNS)
 
 
-def _require_keys(value: dict[str, Any], expected: set[str], location: str) -> None:
+def _require_keys(
+    value: dict[str, Any],
+    expected: set[str],
+    location: str,
+    *,
+    optional: set[str] | None = None,
+) -> None:
     actual = set(value)
     if actual != expected:
         missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
+        extra = sorted(actual - expected - (optional or set()))
+        if not missing and not extra:
+            return
         raise ValueError(f'Invalid AWG profile keys at {location}: missing={missing}, extra={extra}')
 
 
@@ -197,6 +218,44 @@ def _load_retrieval_aliases(value: object) -> tuple[RetrievalAlias, ...]:
     return tuple(aliases)
 
 
+def _load_canonical_page_routes(value: object) -> tuple[CanonicalPageRoute, ...]:
+    if not isinstance(value, list):
+        raise ValueError('AWG profile canonical_page_routes must be a list')
+    routes = []
+    for index, raw in enumerate(value):
+        location = f'canonical_page_routes[{index}]'
+        item = _require_mapping(raw, location)
+        _require_keys(item, {'trigger', 'page_id', 'title', 'source_url', 'owner', 'as_of', 'provenance'}, location)
+        trigger = _require_text(item['trigger'], f'{location}.trigger', max_chars=100)
+        if trigger not in CANONICAL_PAGE_TRIGGERS:
+            raise ValueError(f'AWG profile field {location}.trigger is unsupported')
+        page_id = _require_text(item['page_id'], f'{location}.page_id', max_chars=40)
+        if not page_id.isascii() or not page_id.isdigit():
+            raise ValueError(f'AWG profile field {location}.page_id is invalid')
+        source_url = _require_text(item['source_url'], f'{location}.source_url', max_chars=500)
+        parsed = urlsplit(source_url)
+        if (
+            parsed.scheme != 'https'
+            or parsed.netloc != 'conf.awg.ru'
+            or f'/pages/{page_id}' not in parsed.path
+        ):
+            raise ValueError(f'AWG profile field {location}.source_url is invalid')
+        routes.append(
+            CanonicalPageRoute(
+                trigger=trigger,
+                page_id=page_id,
+                title=_require_text(item['title'], f'{location}.title', max_chars=300),
+                source_url=source_url,
+                owner=_require_text(item['owner'], f'{location}.owner', max_chars=100),
+                as_of=_require_date(item['as_of'], f'{location}.as_of'),
+                provenance=_require_text(item['provenance'], f'{location}.provenance', max_chars=200),
+            )
+        )
+    if len(routes) != len({item.trigger for item in routes}):
+        raise ValueError('AWG profile canonical_page_routes contains duplicate triggers')
+    return tuple(routes)
+
+
 def load_awg_profile(path: Path = PROFILE_PATH) -> AwgProfile:
     """Load and validate the repository-owned AWG identity profile."""
     try:
@@ -213,8 +272,17 @@ def load_awg_profile(path: Path = PROFILE_PATH) -> AwgProfile:
     root = _require_mapping(payload, 'root')
     _require_keys(
         root,
-        {'schema_version', 'identity_version', 'assistant', 'company', 'retrieval_aliases', 'scope', 'responses'},
+        {
+            'schema_version',
+            'identity_version',
+            'assistant',
+            'company',
+            'retrieval_aliases',
+            'scope',
+            'responses',
+        },
         'root',
+        optional={'canonical_page_routes'},
     )
     if type(root['schema_version']) is not int or root['schema_version'] != PROFILE_SCHEMA_VERSION:
         raise ValueError(f'Unsupported AWG profile schema version: {root["schema_version"]!r}')
@@ -256,6 +324,7 @@ def load_awg_profile(path: Path = PROFILE_PATH) -> AwgProfile:
         company_name=company_name,
         approved_context=_load_corporate_facts(company['approved_context']),
         retrieval_aliases=_load_retrieval_aliases(root['retrieval_aliases']),
+        canonical_page_routes=_load_canonical_page_routes(root.get('canonical_page_routes', [])),
         supported_scope=_require_text_list(scope['supported'], 'scope.supported'),
         responses={key: _require_text(responses[key], f'responses.{key}') for key in RESPONSE_KEYS},
     )

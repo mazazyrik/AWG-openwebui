@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import Brand from '$lib/components/common/Brand.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
-	import { WEBUI_BASE_URL } from '$lib/constants';
 
 	const i18n: any = getContext('i18n');
 
@@ -32,15 +32,7 @@
 					}
 				}}
 			>
-				<!-- LICENSE covers this Open WebUI app navigation logo.
-				Do not alter, remove, obscure, or replace it except as LICENSE permits:
-				https://docs.openwebui.com/license. -->
-				<img
-					src="{WEBUI_BASE_URL}/static/splash.png"
-					class="size-11 dark:invert p-0.5"
-					alt="logo"
-					draggable="false"
-				/>
+				<Brand className="h-11 max-w-11 p-0.5" />
 			</button>
 		</Tooltip>
 	</div>
@@ -60,15 +52,7 @@
 				selected = '';
 			}}
 		>
-			<!-- LICENSE covers this Open WebUI chat navigation logo.
-			Do not alter, remove, obscure, or replace it except as LICENSE permits:
-			https://docs.openwebui.com/license. -->
-			<img
-				src="{WEBUI_BASE_URL}/static/favicon.png"
-				class="size-10 {selected === '' ? 'rounded-2xl' : 'rounded-full'}"
-				alt="logo"
-				draggable="false"
-			/>
+			<Brand className="h-10 max-w-10" />
 		</button>
 	</div>
 

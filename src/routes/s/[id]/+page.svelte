@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Brand from '$lib/components/common/Brand.svelte';
 	import { onMount, tick, getContext } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -178,7 +179,7 @@
 
 {#if loaded}
 	<div
-		class="h-screen max-h-[100dvh] w-full flex flex-col text-gray-700 dark:text-gray-100 bg-white dark:bg-gray-900"
+		class="h-screen max-h-[100dvh] w-full flex flex-col text-gray-700 dark:text-gray-100 bg-surface"
 	>
 		<div class="flex flex-col flex-auto justify-center relative">
 			<div class=" flex flex-col w-full flex-auto overflow-auto h-0" id="messages-container">
@@ -188,6 +189,7 @@
 						: 'max-w-[58rem]'} mx-auto"
 				>
 					<div class="px-3">
+						<div class="mb-4 text-sm"><Brand className="h-8" showName /></div>
 						<h1 class=" text-2xl font-normal line-clamp-1 m-0">
 							{title}
 						</h1>

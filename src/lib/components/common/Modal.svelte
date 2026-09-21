@@ -9,7 +9,7 @@
 	export let show = true;
 	export let size = 'md';
 	export let containerClassName = 'p-3';
-	export let className = 'bg-white dark:bg-gray-900 rounded-4xl';
+	export let className = 'bg-surface rounded-4xl';
 
 	let modalElement = null;
 	let mounted = false;

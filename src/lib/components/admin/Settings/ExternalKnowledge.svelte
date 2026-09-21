@@ -410,7 +410,7 @@
 	onMount(refresh);
 </script>
 
-<Modal bind:show={showSourceModal} size="sm" className="bg-white dark:bg-gray-900 rounded-4xl">
+<Modal bind:show={showSourceModal} size="sm" className="bg-surface rounded-4xl">
 	<div>
 		<div class="flex justify-between dark:text-gray-100 px-4 pt-3 pb-1">
 			<h1 class="text-sm font-medium self-center">

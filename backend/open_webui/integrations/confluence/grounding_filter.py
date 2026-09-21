@@ -1320,11 +1320,26 @@ class Filter:
             raise ValueError('Invalid Confluence lookup response')
         return payload
 
-    async def _hydrate_sources(self, sources: list[dict], query: str) -> tuple[list[dict], bool]:
+    async def _hydrate_sources(
+        self,
+        sources: list[dict],
+        query: str,
+        canonical_page_id: str | None = None,
+    ) -> tuple[list[dict], bool]:
         client = ConfluencePageClient()
         pages = []
         failed = False
+        if canonical_page_id:
+            try:
+                page = await client.get_page(canonical_page_id)
+            except ConfluenceClientError:
+                failed = True
+            else:
+                if page is not None:
+                    pages.append(page)
         for source in sources[:4]:
+            if source['page_id'] == canonical_page_id:
+                continue
             try:
                 page = await client.get_page(source['page_id'])
             except ConfluenceClientError:
@@ -1505,17 +1520,26 @@ class Filter:
         key = 'memory_add' if command.operation == 'add' else 'memory_remove'
         return self.profile.responses[key]
 
-    async def _grounded_sources(self, queries: list[str]) -> tuple[list[dict], bool, str | None]:
+    async def _grounded_sources(
+        self,
+        queries: list[str],
+        canonical_page_id: str | None = None,
+    ) -> tuple[list[dict], bool, str | None]:
         payloads = []
         try:
             async with asyncio.timeout(self.valves.timeout_seconds):
-                async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as client:
-                    for query in queries:
-                        payload = await self._lookup(client, query)
-                        if payload.get('mode') == 'unavailable':
-                            return [], True, 'lookup_unavailable'
-                        payloads.append(payload)
-                sources, hydration_failed = await self._hydrate_sources(collect_sources(payloads), queries[0])
+                if canonical_page_id is None:
+                    async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as client:
+                        for query in queries:
+                            payload = await self._lookup(client, query)
+                            if payload.get('mode') == 'unavailable':
+                                return [], True, 'lookup_unavailable'
+                            payloads.append(payload)
+                sources, hydration_failed = await self._hydrate_sources(
+                    collect_sources(payloads),
+                    queries[0],
+                    canonical_page_id,
+                )
                 if hydration_failed and not sources:
                     return sources, True, 'hydration_failed'
                 return sources, False, None
@@ -1655,7 +1679,15 @@ class Filter:
             set_awg_request_state(__request__, model_id, invocation_id, state)
             self._log_route(state, lookup=False)
             return body
-        sources, unavailable, unavailable_reason = await self._grounded_sources(queries)
+        canonical_page_id = next(
+            (
+                item.page_id
+                for item in self.profile.canonical_page_routes
+                if item.trigger == decision.scope_decision
+            ),
+            None,
+        )
+        sources, unavailable, unavailable_reason = await self._grounded_sources(queries, canonical_page_id)
         fallback_diagnostics = None
         if unavailable:
             fallback = None
