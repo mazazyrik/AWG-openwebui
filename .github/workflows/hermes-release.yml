@@ -131,14 +131,17 @@ jobs:
 
           upstream_image=$(jq -r '.upstream_base_image' "$manifest")
           runtime_image=$(jq -r '.runtime_image' "$manifest")
+          package_source="https://github.com/${GITHUB_REPOSITORY}"
           docker pull "$runtime_image"
           docker image inspect "$runtime_image" >"$RUNNER_TEMP/runtime-image.json"
           jq -e \
             --arg release "$HERMES_RELEASE" \
             --arg commit "$HERMES_UPSTREAM_COMMIT" \
             --arg base "$upstream_image" \
+            --arg source "$package_source" \
             '
               .[0].Config.User == "10000:10000" and
+              .[0].Config.Labels["org.opencontainers.image.source"] == $source and
               .[0].Config.Labels["org.opencontainers.image.version"] == $release and
               .[0].Config.Labels["org.opencontainers.image.revision"] == $commit and
               .[0].Config.Labels["com.awg.hermes.base-image"] == $base
