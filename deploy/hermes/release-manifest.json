@@ -1,7 +1,7 @@
 {
-  "hermes_release": "v2026.9.14",
-  "hermes_upstream_commit": "345cd2b057a452236de401d3534b8502a7465e8d",
-  "upstream_base_image": null,
-  "runtime_image": null,
-  "verified_at": null
+	"hermes_release": "v2026.9.14",
+	"hermes_upstream_commit": "345cd2b057a452236de401d3534b8502a7465e8d",
+	"upstream_base_image": null,
+	"runtime_image": null,
+	"verified_at": null
 }

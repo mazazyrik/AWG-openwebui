@@ -95,7 +95,7 @@
 		if (nativeResult.status === 'fulfilled' && hermesResult.status === 'fulfilled') {
 			toast.success($i18n.t('Memory cleared successfully'));
 		} else {
-			toast.error($i18n.t('Some memories could not be cleared'));
+			toast.error($i18n.t('Something went wrong :/'));
 		}
 		showClearConfirmDialog = false;
 	};
