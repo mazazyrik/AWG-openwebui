@@ -63,6 +63,8 @@ def test_runtime_config_restricts_api_server_toolsets():
     assert '\ntoolsets:' not in config
     assert '    - mcp-awg' in config
     assert 'command: /opt/hermes/.venv/bin/python' in config
+    assert 'AWG_HERMES_BROKER_URL: http://openwebui:8080' in config
+    assert 'AWG_HERMES_PRINCIPAL_FILE: /run/awg-hermes/principal-token' in config
 
 
 @pytest.mark.asyncio
