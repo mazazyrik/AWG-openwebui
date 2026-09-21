@@ -73,7 +73,7 @@ def test_grounded_instructions_include_source_ids_and_exact_citation_format():
                 'url': 'https://conf.awg.ru/pages/1',
                 'page_id': '1',
                 'version': 2,
-                'content': 'Verified project fact.',
+                'text': 'Verified project fact.',
             },
         ),
     )
@@ -81,6 +81,7 @@ def test_grounded_instructions_include_source_ids_and_exact_citation_format():
     instructions = client._instructions(state, [], True)
 
     assert '"id":"S1"' in instructions
+    assert 'Verified project fact.' in instructions
     assert '`[S<number>] <matching source URL>`' in instructions
 
 
