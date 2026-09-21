@@ -58,17 +58,19 @@ def test_capability_archive_is_owned_by_runtime_user_and_mode_0600():
 
 @pytest.mark.asyncio
 async def test_gateway_identity_requires_uid_gid_10000(monkeypatch):
+    docker = AsyncMock(return_value={'Processes': [['42', '10000', '10000', 'hermes gateway run']]})
     monkeypatch.setattr(
         provisioner,
         '_docker',
-        AsyncMock(return_value={'Processes': [['10000', '10000', 'hermes gateway run']]}),
+        docker,
     )
     await provisioner._verify_gateway_identity('container')
+    assert docker.await_args.args[1].endswith('ps_args=-n%20-eo%20pid,uid,gid,args')
 
     monkeypatch.setattr(
         provisioner,
         '_docker',
-        AsyncMock(return_value={'Processes': [['0', '0', 'hermes gateway run']]}),
+        AsyncMock(return_value={'Processes': [['42', '0', '0', 'hermes gateway run']]}),
     )
     with pytest.raises(RuntimeError, match='UID/GID 10000'):
         await provisioner._verify_gateway_identity('container')

@@ -322,7 +322,7 @@ async def _verify_gateway_identity(container_id: str) -> None:
     for _ in range(30):
         process_table = await _docker(
             'GET',
-            f'/containers/{container_id}/top?ps_args=-n%20-eo%20uid,gid,args',
+            f'/containers/{container_id}/top?ps_args=-n%20-eo%20pid,uid,gid,args',
             expected=(200,),
         )
         rows = process_table.get('Processes')
@@ -331,11 +331,11 @@ async def _verify_gateway_identity(container_id: str) -> None:
                 row
                 for row in rows
                 if isinstance(row, list)
-                and len(row) >= 3
-                and 'gateway' in ' '.join(str(value) for value in row[2:]).lower()
+                and len(row) >= 4
+                and 'gateway' in ' '.join(str(value) for value in row[3:]).lower()
             ]
             if gateway_rows:
-                if all(str(row[0]) == '10000' and str(row[1]) == '10000' for row in gateway_rows):
+                if all(str(row[1]) == '10000' and str(row[2]) == '10000' for row in gateway_rows):
                     return
                 raise RuntimeError('Hermes gateway process is not running as UID/GID 10000')
         await asyncio.sleep(1)
