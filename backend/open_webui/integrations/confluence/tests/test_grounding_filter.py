@@ -999,9 +999,7 @@ async def test_kratno_delivery_question_hydrates_its_canonical_page_without_sear
 
 
 def test_kratno_status_follow_up_inherits_canonical_route():
-    decision = route_request(
-        messages('Какую разработку по геймификации мы делали?', 'А какой сейчас статус?')
-    )
+    decision = route_request(messages('Какую разработку по геймификации мы делали?', 'А какой сейчас статус?'))
 
     assert (decision.route, decision.scope_decision) == ('confluence_grounded', 'awg_kratno_delivery_question')
 

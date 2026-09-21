@@ -1680,11 +1680,7 @@ class Filter:
             self._log_route(state, lookup=False)
             return body
         canonical_page_id = next(
-            (
-                item.page_id
-                for item in self.profile.canonical_page_routes
-                if item.trigger == decision.scope_decision
-            ),
+            (item.page_id for item in self.profile.canonical_page_routes if item.trigger == decision.scope_decision),
             None,
         )
         sources, unavailable, unavailable_reason = await self._grounded_sources(queries, canonical_page_id)

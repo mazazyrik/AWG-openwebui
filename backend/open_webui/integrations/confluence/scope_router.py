@@ -218,15 +218,14 @@ def _has_prior_kratno_anchor(messages: list[dict]) -> bool:
     if len(user_messages) < 2:
         return False
     previous_question = user_messages[-2]
-    return bool(
-        KRATNO_ALIAS_RE.search(previous_question)
-        or KRATNO_DELIVERY_QUESTION_RE.fullmatch(previous_question)
-    )
+    return bool(KRATNO_ALIAS_RE.search(previous_question) or KRATNO_DELIVERY_QUESTION_RE.fullmatch(previous_question))
 
 
 def _is_kratno_follow_up(messages: list[dict], question: str) -> bool:
-    return not OTHER_PROJECT_RE.search(question) and _has_prior_kratno_anchor(messages) and bool(
-        GROUNDED_INTENT_RE.search(question) or DELIVERY_QUESTION_RE.search(question)
+    return (
+        not OTHER_PROJECT_RE.search(question)
+        and _has_prior_kratno_anchor(messages)
+        and bool(GROUNDED_INTENT_RE.search(question) or DELIVERY_QUESTION_RE.search(question))
     )
 
 
