@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 BROKER_URL = os.environ['AWG_HERMES_BROKER_URL'].rstrip('/')
 TOKEN_FILE = Path(os.environ.get('AWG_HERMES_PRINCIPAL_FILE', '/run/awg-hermes/principal-token'))
@@ -16,7 +16,7 @@ WORKSPACE = Path('/workspace').resolve()
 ALLOWED_ARTIFACTS = {'.pdf', '.docx', '.xlsx', '.pptx'}
 MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 
-mcp = FastMCP('awg')
+mcp = MCPServer('awg')
 
 
 def _request(path: str, *, method: str = 'GET', payload: dict | None = None, body: bytes | None = None, headers=None):
