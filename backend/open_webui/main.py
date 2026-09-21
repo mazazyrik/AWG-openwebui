@@ -134,7 +134,12 @@ from open_webui.events import (
 from open_webui.events import (
     get_event_catalog as get_event_catalog_items,
 )
-from open_webui.integrations.confluence.grounding_filter import UNAVAILABLE, finalize_awg_answer
+from open_webui.integrations.confluence.grounding_filter import (
+    UNAVAILABLE,
+    finalize_awg_answer,
+    finalize_awg_response,
+    validate_awg_artifact_text,
+)
 from open_webui.integrations.confluence.runtime import (
     AwgResponseRejected,
     build_awg_response,
@@ -144,6 +149,16 @@ from open_webui.integrations.confluence.runtime import (
     get_awg_request_state,
     register_awg_invocation,
 )
+from open_webui.integrations.hermes import HermesClient, is_hermes_model
+from open_webui.integrations.hermes.broker import router as hermes_broker_router
+from open_webui.integrations.hermes.broker import (
+    artifact_reaper_loop,
+    commit_staged_artifacts,
+    discard_staged_artifacts,
+    extract_staged_artifact_text,
+)
+from open_webui.integrations.hermes.identity import get_authorized_file
+from open_webui.integrations.hermes.settings import HERMES_ALLOWED_ATTACHMENT_EXTENSIONS, validate_hermes_settings
 from open_webui.internal.db import engine, get_async_session
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
@@ -289,6 +304,7 @@ if SAFE_MODE:
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
+validate_hermes_settings()
 
 
 async def emit_chat_list_event(metadata: dict, chat_id: str):
@@ -397,6 +413,7 @@ async def lifespan(app: FastAPI):
 
     if app.state.redis is not None:
         app.state.redis_task_command_listener = asyncio.create_task(redis_task_command_listener(app))
+        app.state.hermes_artifact_reaper = asyncio.create_task(artifact_reaper_loop(app))
 
     app.state.periodic_usage_pool_cleanup = asyncio.create_task(periodic_usage_pool_cleanup())
     app.state.periodic_session_pool_cleanup = asyncio.create_task(periodic_session_pool_cleanup())
@@ -483,6 +500,8 @@ async def lifespan(app: FastAPI):
 
     if hasattr(app.state, 'redis_task_command_listener'):
         app.state.redis_task_command_listener.cancel()
+    if hasattr(app.state, 'hermes_artifact_reaper'):
+        app.state.hermes_artifact_reaper.cancel()
 
     app.state.periodic_usage_pool_cleanup.cancel()
     app.state.periodic_session_pool_cleanup.cancel()
@@ -855,6 +874,7 @@ app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
 app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['notifications'])
 app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
 app.include_router(confluence.router, prefix='/api/v1/integrations/confluence', tags=['confluence'])
+app.include_router(hermes_broker_router, prefix='/api/v1/integrations/hermes', tags=['hermes'])
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
 app.include_router(tools.router, prefix='/api/v1/tools', tags=['tools'])
 app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
@@ -1649,16 +1669,72 @@ async def chat_completion(
             if is_awg_request:
                 answer = UNAVAILABLE
                 if awg_state is not None:
-                    if awg_state.provider_required and not awg_state.unavailable and awg_state.sources:
+                    if (
+                        awg_state.provider_required
+                        and (not awg_state.unavailable or awg_state.route == 'general_work')
+                        and (awg_state.sources or awg_state.route == 'general_work')
+                    ):
                         try:
-                            provider_response = await chat_completion_handler(request, form_data, user)
+                            hermes_artifacts = []
+                            if is_hermes_model(str(model.get('id') or '')):
+                                authorized_files = []
+                                for item in metadata.get('files') or []:
+                                    file_id = item.get('id') if isinstance(item, dict) else None
+                                    if not file_id:
+                                        continue
+                                    file = await get_authorized_file(file_id, user)
+                                    extension = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+                                    if extension not in HERMES_ALLOWED_ATTACHMENT_EXTENSIONS:
+                                        raise AwgResponseRejected('unsupported_attachment_type')
+                                    authorized_files.append({'id': file.id, 'name': file.filename})
+                                hermes = HermesClient(
+                                    request,
+                                    user,
+                                    metadata,
+                                    model,
+                                    event_emitter=await get_event_emitter(metadata),
+                                )
+                                provider_response = await hermes.run(
+                                    form_data,
+                                    awg_state,
+                                    authorized_files,
+                                    persistent_memory=is_saved_chat_id(metadata.get('chat_id')),
+                                )
+                                hermes_artifacts = provider_response.pop('_hermes_files', [])
+                            else:
+                                provider_response = await chat_completion_handler(request, form_data, user)
                             if isinstance(provider_response, JSONResponse) and provider_response.status_code >= 400:
                                 raise AwgResponseRejected('provider_response_error')
                             provider_answer = await extract_awg_provider_text(provider_response)
-                            answer = finalize_awg_answer(awg_state, provider_answer)
+                            finalized = finalize_awg_response(awg_state, provider_answer)
+                            answer = finalized.text
+                            if hermes_artifacts:
+                                if finalized.response_kind == 'grounded_no_evidence':
+                                    await discard_staged_artifacts(hermes_artifacts, request.app.state.redis)
+                                    hermes_artifacts = []
+                                else:
+                                    artifact_texts = [
+                                        await extract_staged_artifact_text(artifact, user)
+                                        for artifact in hermes_artifacts
+                                    ]
+                                    if not all(validate_awg_artifact_text(awg_state, text) for text in artifact_texts):
+                                        await discard_staged_artifacts(hermes_artifacts, request.app.state.redis)
+                                        hermes_artifacts = []
+                                        raise AwgResponseRejected('hermes_artifact_grounding_failed')
+                                    hermes_files = await commit_staged_artifacts(request, user, hermes_artifacts)
+                                    hermes_artifacts = []
+                                    await (await get_event_emitter(metadata))(
+                                        {'type': 'chat:message:files', 'data': {'files': hermes_files}}
+                                    )
                         except asyncio.CancelledError:
+                            if hermes_artifacts:
+                                await asyncio.shield(
+                                    discard_staged_artifacts(hermes_artifacts, request.app.state.redis)
+                                )
                             raise
                         except Exception:
+                            if hermes_artifacts:
+                                await discard_staged_artifacts(hermes_artifacts, request.app.state.redis)
                             log.warning('AWG GPT provider response rejected')
                     else:
                         answer = finalize_awg_answer(awg_state, '')

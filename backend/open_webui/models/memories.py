@@ -92,11 +92,7 @@ class MemoriesTable:
         async with get_async_db_context(db) as db:
             try:
                 memory = await db.get(Memory, id)
-                if (
-                    not memory
-                    or memory.user_id != user_id
-                    or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
-                ):
+                if not memory or memory.user_id != user_id or (self.is_awg_gpt_memory(memory) and not include_awg_gpt):
                     return None
 
                 if content is not None:
@@ -124,11 +120,7 @@ class MemoriesTable:
                 result = await db.execute(select(Memory))
                 memories = result.scalars().all()
                 rows = [MemoryModel.model_validate(memory) for memory in memories]
-                return (
-                    rows
-                    if include_awg_gpt
-                    else [memory for memory in rows if not self.is_awg_gpt_memory(memory)]
-                )
+                return rows if include_awg_gpt else [memory for memory in rows if not self.is_awg_gpt_memory(memory)]
             except Exception:
                 return None
 
@@ -145,11 +137,7 @@ class MemoriesTable:
                 rows = [MemoryModel.model_validate(memory) for memory in memories]
                 if include_awg_gpt:
                     return rows
-                return [
-                    memory
-                    for memory in rows
-                    if not self.is_awg_gpt_memory(memory)
-                ]
+                return [memory for memory in rows if not self.is_awg_gpt_memory(memory)]
             except Exception:
                 return None
 
@@ -218,11 +206,7 @@ class MemoriesTable:
         async with get_async_db_context(db) as db:
             try:
                 memory = await db.get(Memory, id)
-                if (
-                    not memory
-                    or memory.user_id != user_id
-                    or (self.is_awg_gpt_memory(memory) and not include_awg_gpt)
-                ):
+                if not memory or memory.user_id != user_id or (self.is_awg_gpt_memory(memory) and not include_awg_gpt):
                     return False
 
                 await db.delete(memory)

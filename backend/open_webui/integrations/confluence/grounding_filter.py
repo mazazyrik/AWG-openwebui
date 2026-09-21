@@ -34,6 +34,7 @@ from open_webui.integrations.confluence.runtime import (
     set_awg_request_state,
 )
 from open_webui.integrations.confluence.scope_router import (
+    AWG_MARKER_RE,
     CORPORATE_FIRST_PERSON_RE,
     CORPORATE_POSSESSIVE_RE,
     RouteDecision,
@@ -42,6 +43,7 @@ from open_webui.integrations.confluence.scope_router import (
     parse_memory_command,
     route_request,
 )
+from open_webui.integrations.hermes.client import is_hermes_model
 from open_webui.utils.memory import execute_awg_memory_command, get_awg_alias_expansions
 
 __all__ = [
@@ -55,6 +57,8 @@ __all__ = [
 
 ALLOWED_SOURCE_HOST = 'conf.awg.ru'
 MAX_VALIDATED_ANSWER_CHARS = 32_768
+MAX_VALIDATED_ARTIFACT_CHARS = 1024 * 1024
+ARTIFACT_VALIDATION_CHUNK_CHARS = 24_000
 log = logging.getLogger(__name__)
 DEFAULT_PROFILE = load_awg_profile()
 CLARIFY = DEFAULT_PROFILE.responses['clarification']
@@ -180,6 +184,40 @@ LITERAL_FACT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 LITERAL_FACT_VALUE_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9 &+./'()—–-]{0,119}")
+CORPORATE_CLAIM_RE = re.compile(
+    r'\b(?:проект\w*|клиент\w*|заказчик\w*|команд\w*|роль\w*|статус\w*|'
+    r'процесс\w*|регламент\w*|менеджер\w*|руководител\w*|лидер\w*|сотрудник\w*|персонал\w*|'
+    r'projects?|clients?|customers?|teams?|roles?|status|process(?:es)?|polic(?:y|ies)|'
+    r'managers?|leaders?|employees?|personnel)\b.{0,100}'
+    r'\b(?:руковод\w*|вед[её]т|управля\w*|отвеча\w*|работа\w*|участву\w*|назнач\w*|'
+    r'заверш\w*|начат\w*|явля\w*|составля\w*|имеет|находится|'
+    r'leads?|manages?|owns?|works?|participates?|assigned|completed|started|is|are|has|have)\b'
+    r'|\b(?:руковод\w*|вед[её]т|управля\w*|отвеча\w*|leads?|manages?|owns?)\b.{0,100}'
+    r'\b(?:проект\w*|клиент\w*|команд\w*|процесс\w*|projects?|clients?|teams?|process(?:es)?)\b',
+    re.IGNORECASE,
+)
+CORPORATE_ROLE_NAME_RE = re.compile(
+    r'\b(?:руководит|руководитель|менеджер|лидер|сотрудник|разработчик|аналитик|дизайнер|'
+    r'должность|ответствен\w*|отвечает|принадлежит|участник|владелец|продаж\w*|аккаунт\w*|'
+    r'lead|leader|manager|employee|developer|analyst|designer|title|role|responsib\w*|'
+    r'affiliat\w*|member|owner|sales|account executive)\b.{0,60}'
+    r'\b([A-ZА-ЯЁ][A-Za-zА-Яа-яЁё]{2,}(?:\s+[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё]{2,}){0,2})\b'
+    r'|\b([A-ZА-ЯЁ][A-Za-zА-Яа-яЁё]{2,}(?:\s+[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё]{2,}){0,2})\b.{0,60}'
+    r'\b(?:руководит|управляет|отвечает|владеет|состоит|работает|вед[её]т продажи|'
+    r'leads?|manages?|owns?|is (?:the )?(?:project )?(?:manager|lead|owner)|'
+    r'is responsible|belongs|works|reports to|handles sales)\b',
+    re.IGNORECASE,
+)
+EXTERNAL_PROVENANCE_RE = re.compile(
+    r'\b(?:по (?:приложенн\w*|внешн\w*)(?: (?:приложенн\w*|внешн\w*))? (?:документ\w*|файл\w*|источник\w*)|'
+    r'согласно (?:приложенн\w*|внешн\w*) (?:документ\w*|файл\w*|источник\w*)|'
+    r'из (?:приложенн\w*|внешн\w*) (?:документ\w*|файл\w*|источник\w*)|'
+    r'по общим знаниям модели|по общедоступным данным|'
+    r'according to (?:the )?(?:attached|external) (?:document|file|source)|'
+    r'the (?:attached|external) (?:document|file|source) (?:states|says)|'
+    r'based on (?:general model knowledge|public information))\b',
+    re.IGNORECASE,
+)
 PERSON_ROLE_LABELS = {
     'участник команды',
     'член команды',
@@ -879,10 +917,7 @@ def _project_navigation_fallback(question: str, sources: list[dict]) -> str | No
     if PROJECT_LIST_INTENT_RE.search(question) is None or not sources:
         return None
     references = '\n'.join(f'- [{source["id"]}] {source["url"]}' for source in sources[:4])
-    candidate = (
-        'Подтверждённый перечень проектов безопасно извлечь не удалось. '
-        f'Найденные материалы:\n{references}'
-    )
+    candidate = f'Подтверждённый перечень проектов безопасно извлечь не удалось. Найденные материалы:\n{references}'
     validated = grounded_answer(candidate, sources)
     return None if validated == CITATION_FAILURE else validated
 
@@ -1012,9 +1047,7 @@ def _literal_grounded_fallback(
     fact_entries = _literal_fact_entries(question, sources)
     parts = [project_answer] if project_answer is not None else []
     if fact_entries:
-        fact_answer = '\n'.join(
-            f'- {statement} [{source["id"]}] {source["url"]}' for statement, source in fact_entries
-        )
+        fact_answer = '\n'.join(f'- {statement} [{source["id"]}] {source["url"]}' for statement, source in fact_entries)
         validated = grounded_answer(fact_answer, sources)
         if validated != CITATION_FAILURE:
             parts.append(validated)
@@ -1082,6 +1115,66 @@ def finalize_awg_response(state: AwgRequestState | None, provider_answer: str) -
         return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
     if not state.provider_required:
         return AwgFinalAnswer(state.deterministic_answer or UNAVAILABLE, state.response_kind)
+    if state.route == 'general_work':
+        if not state.structured_general_work:
+            answer = provider_answer.strip()
+            if not answer or len(answer) > MAX_VALIDATED_ANSWER_CHARS:
+                return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+            if AWG_MARKER_RE.search(answer) or CORPORATE_POSSESSIVE_RE.search(answer):
+                if state.unavailable:
+                    return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+                if not state.sources:
+                    return AwgFinalAnswer(UNKNOWN, 'grounded_no_evidence')
+                return _finalize_grounded_provider_answer(answer, list(state.sources))
+            return AwgFinalAnswer(answer, 'conversational')
+        if not provider_answer.startswith('AWG_HERMES_RESULT:'):
+            return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+        try:
+            contract = json.loads(provider_answer.removeprefix('AWG_HERMES_RESULT:'))
+        except (TypeError, ValueError):
+            return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+        if (
+            set(contract) != {'answer', 'uses_corporate_facts', 'evidence_urls'}
+            or not isinstance(contract['answer'], str)
+            or not isinstance(contract['uses_corporate_facts'], bool)
+            or not isinstance(contract['evidence_urls'], list)
+        ):
+            return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+        answer = contract['answer'].strip()
+        if not answer or len(answer) > MAX_VALIDATED_ANSWER_CHARS:
+            return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+        role_claim_names = [
+            next(value for value in match.groups() if value) for match in CORPORATE_ROLE_NAME_RE.finditer(answer)
+        ]
+        explicit_awg_context = bool(AWG_MARKER_RE.search(answer) or CORPORATE_POSSESSIVE_RE.search(answer)) or any(
+            re.search(rf'(?<!\w){re.escape(alias)}(?!\w)', answer, re.IGNORECASE) for alias in state.approved_aliases
+        )
+        external_provenance = bool(EXTERNAL_PROVENANCE_RE.search(answer))
+        detected_corporate_claim = (
+            explicit_awg_context
+            or (bool(CORPORATE_CLAIM_RE.search(answer)) and not external_provenance)
+            or (bool(role_claim_names) and not external_provenance)
+        )
+        requires_corporate_evidence = (
+            state.scope_decision
+            not in {
+                'general_work_safe_transform',
+                'general_work_task',
+                'hermes_native_memory',
+            }
+            or contract['uses_corporate_facts']
+            or detected_corporate_claim
+        )
+        if requires_corporate_evidence:
+            if state.unavailable:
+                return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
+            if not state.sources:
+                return AwgFinalAnswer(UNKNOWN, 'grounded_no_evidence')
+            known_urls = {source['url'] for source in state.sources}
+            if not contract['evidence_urls'] or not set(contract['evidence_urls']) <= known_urls:
+                return AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
+            return _finalize_grounded_provider_answer(answer, list(state.sources))
+        return AwgFinalAnswer(answer, 'conversational')
     if state.unavailable:
         return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
     if not state.sources:
@@ -1136,6 +1229,28 @@ def _finalize_grounded_provider_answer(provider_answer: str, sources: list[dict]
 def finalize_awg_answer(state: AwgRequestState | None, provider_answer: str) -> str:
     """Return the text from the typed AWG response contract."""
     return finalize_awg_response(state, provider_answer).text
+
+
+def validate_awg_artifact_text(state: AwgRequestState | None, text: str) -> bool:
+    content = text.strip()
+    if not content or len(content) > MAX_VALIDATED_ARTIFACT_CHARS or contains_untrusted_instruction(content):
+        return False
+    evidence_urls = []
+    if isinstance(state, AwgRequestState):
+        evidence_urls = [source['url'] for source in state.sources if source.get('url') in content]
+    for offset in range(0, len(content), ARTIFACT_VALIDATION_CHUNK_CHARS):
+        chunk = content[offset : offset + ARTIFACT_VALIDATION_CHUNK_CHARS]
+        provider_answer = chunk
+        if isinstance(state, AwgRequestState) and state.route == 'general_work' and state.structured_general_work:
+            provider_answer = 'AWG_HERMES_RESULT:' + json.dumps(
+                {'answer': chunk, 'uses_corporate_facts': False, 'evidence_urls': evidence_urls},
+                ensure_ascii=False,
+                separators=(',', ':'),
+            )
+        result = finalize_awg_response(state, provider_answer)
+        if result.response_kind == 'grounded_no_evidence':
+            return False
+    return True
 
 
 class ConfluencePageClient(ConfluenceMCPClient):
@@ -1250,6 +1365,9 @@ class Filter:
         deterministic_answer: str | None = None,
         grounded_fallback: str | None = None,
         grounded_fallback_mode: GroundedFallbackMode = 'conditional',
+        structured_general_work: bool = False,
+        request_text: str = '',
+        approved_aliases: tuple[str, ...] = (),
     ) -> AwgRequestState:
         response_kind: ResponseKind = ROUTE_RESPONSE_KINDS[decision.route]
         provenance = tuple(
@@ -1275,10 +1393,13 @@ class Filter:
             unavailable=unavailable,
             unavailable_reason=unavailable_reason,
             client_stream=client_stream,
-            provider_required=decision.route == 'confluence_grounded',
+            provider_required=decision.route in {'confluence_grounded', 'general_work'},
             deterministic_answer=deterministic_answer,
+            structured_general_work=structured_general_work,
             grounded_fallback=grounded_fallback,
             grounded_fallback_mode=grounded_fallback_mode,
+            request_text=request_text,
+            approved_aliases=approved_aliases,
         )
 
     def _append_policy(self, body: dict, directive: str) -> None:
@@ -1435,9 +1556,11 @@ class Filter:
             raise RuntimeError('AWG GPT grounding requires server invocation context')
         set_awg_request_state(__request__, model_id, invocation_id, None)
 
-        body['stream'] = False
-        body.pop('tools', None)
-        body['tool_choice'] = 'none'
+        hermes_mode = is_hermes_model(model_id)
+        if not hermes_mode:
+            body['stream'] = False
+            body.pop('tools', None)
+            body['tool_choice'] = 'none'
         messages = body.get('messages', [])
         question = latest_user_text(messages)
         approved_aliases = tuple(item.alias for item in self.profile.retrieval_aliases)
@@ -1453,6 +1576,9 @@ class Filter:
             personal_alias=bool(personal_expansions),
         )
 
+        if decision.route == 'memory_command' and hermes_mode:
+            decision = RouteDecision('general_work', 'hermes_native_memory', decision.memory_operation)
+
         if decision.route == 'memory_command':
             answer = await self._memory_response(__request__, __user__, question, approved_aliases)
             state = self._state(
@@ -1462,9 +1588,38 @@ class Filter:
                 filter_id=__id__,
                 client_stream=client_stream,
                 deterministic_answer=answer,
+                request_text=question,
+                approved_aliases=approved_aliases,
             )
             set_awg_request_state(__request__, model_id, invocation_id, state)
             self._log_route(state, lookup=False)
+            return body
+
+        if decision.route == 'general_work' and hermes_mode:
+            sources, unavailable, unavailable_reason = await self._grounded_sources([question])
+            state = self._state(
+                decision,
+                model_id=model_id,
+                invocation_id=invocation_id,
+                filter_id=__id__,
+                client_stream=client_stream,
+                sources=sources,
+                unavailable=unavailable,
+                unavailable_reason=unavailable_reason,
+                structured_general_work=True,
+                request_text=question,
+                approved_aliases=approved_aliases,
+            )
+            set_awg_request_state(__request__, model_id, invocation_id, state)
+            self._append_policy(
+                body,
+                'FINAL_ROUTE: general_work. Complete the work using attachments or general model knowledge. '
+                'State that provenance when it matters. Do not assert AWG facts without Confluence evidence. '
+                'External web access and Confluence writes are forbidden. '
+                f'CONFLUENCE_PREFLIGHT_AVAILABLE: {str(not unavailable).lower()}. '
+                'SOURCE_DATA_JSON:\n' + json.dumps(sources, ensure_ascii=False) + '\nSOURCE_DATA_JSON_END',
+            )
+            self._log_route(state, lookup=True)
             return body
 
         if decision.route != 'confluence_grounded':
@@ -1476,6 +1631,8 @@ class Filter:
                 filter_id=__id__,
                 client_stream=client_stream,
                 deterministic_answer=answer,
+                request_text=question,
+                approved_aliases=approved_aliases,
             )
             set_awg_request_state(__request__, model_id, invocation_id, state)
             self._log_route(state, lookup=False)
@@ -1492,6 +1649,8 @@ class Filter:
                 filter_id=__id__,
                 client_stream=client_stream,
                 deterministic_answer=answer,
+                request_text=question,
+                approved_aliases=approved_aliases,
             )
             set_awg_request_state(__request__, model_id, invocation_id, state)
             self._log_route(state, lookup=False)
@@ -1519,6 +1678,8 @@ class Filter:
             unavailable_reason=unavailable_reason,
             grounded_fallback=fallback,
             grounded_fallback_mode=fallback_mode,
+            request_text=question,
+            approved_aliases=approved_aliases,
         )
         set_awg_request_state(__request__, model_id, invocation_id, state)
         context = (
@@ -1560,9 +1721,11 @@ class Filter:
     ) -> dict:
         if not self._is_attached(__model__, __id__):
             return body
-        body.pop('tools', None)
-        body['tool_choice'] = 'none'
-        body['stream'] = False
+        model_id = str((__model__ or {}).get('id') or '')
+        if not is_hermes_model(model_id):
+            body.pop('tools', None)
+            body['tool_choice'] = 'none'
+            body['stream'] = False
         body['temperature'] = self.valves.temperature
         body['max_tokens'] = self.valves.max_tokens
         template_kwargs = body.get('chat_template_kwargs')

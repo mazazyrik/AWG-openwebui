@@ -28,6 +28,32 @@ export const getMemories = async (token: string) => {
 	return res;
 };
 
+export const getHermesMemories = async (token: string) => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/integrations/hermes/memory`, {
+		headers: { Accept: 'application/json', authorization: `Bearer ${token}` }
+	});
+	if (!res.ok) throw (await res.json()).detail;
+	return (await res.json()).items ?? [];
+};
+
+export const deleteHermesMemory = async (token: string, name: string) => {
+	const res = await fetch(
+		`${WEBUI_API_BASE_URL}/integrations/hermes/memory/${encodeURIComponent(name)}`,
+		{ method: 'DELETE', headers: { authorization: `Bearer ${token}` } }
+	);
+	if (!res.ok) throw (await res.json()).detail;
+	return res.json();
+};
+
+export const clearHermesMemories = async (token: string) => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/integrations/hermes/memory`, {
+		method: 'DELETE',
+		headers: { authorization: `Bearer ${token}` }
+	});
+	if (!res.ok) throw (await res.json()).detail;
+	return res.json();
+};
+
 export const addNewMemory = async (token: string, content: string, type = 'user', path = '') => {
 	let error = null;
 

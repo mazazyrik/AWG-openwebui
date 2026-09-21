@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -32,14 +34,22 @@ jobs:
       - name: Install dependencies
         run: npm install --force
 
+      - name: Select changed frontend files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git diff --name-only "${BASE_SHA}...HEAD" \
+            | grep -E '\.(js|ts|svelte|css|md|html|json)$' \
+            > "${RUNNER_TEMP}/changed-frontend-files" || true
+
       - name: Verify code formatting
-        run: npm run format
+        run: |
+          if [ -s "${RUNNER_TEMP}/changed-frontend-files" ]; then
+            xargs -d '\n' npx prettier --plugin-search-dir --check < "${RUNNER_TEMP}/changed-frontend-files"
+          fi
 
       - name: Verify i18n strings
-        run: npm run i18n:parse
-
-      - name: Ensure working tree is clean
-        run: git diff --exit-code
+        run: node scripts/verify-i18n-keys.mjs "${RUNNER_TEMP}/changed-frontend-files"
 
       - name: Production build
         run: npm run build

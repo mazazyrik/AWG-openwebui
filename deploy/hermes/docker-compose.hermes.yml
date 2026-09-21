@@ -1,0 +1,52 @@
+services:
+  openwebui:
+    environment:
+      AWG_HERMES_ENABLED: 'true'
+      AWG_HERMES_MODEL_IDS: '${AWG_HERMES_MODEL_IDS}'
+      AWG_HERMES_CONTROL_SECRET: '${AWG_HERMES_CONTROL_SECRET}'
+      AWG_HERMES_PROVISIONER_URL: 'http://awg-hermes-provisioner:8788'
+      AWG_HERMES_BROKER_URL: 'http://openwebui:8080'
+      AWG_HERMES_QWEN_BASE_URL: 'http://llama:8000/v1'
+      AWG_HERMES_QWEN_API_KEY: '${AWG_HERMES_QWEN_API_KEY}'
+      AWG_HERMES_QWEN_MODEL: '${AWG_HERMES_QWEN_MODEL}'
+    networks:
+      - awg-hermes-control
+      - awg-hermes-runtime
+
+  awg-hermes-provisioner:
+    image: '${AWG_OPENWEBUI_IMAGE}'
+    command: ['uvicorn', 'open_webui.integrations.hermes.provisioner:app', '--host', '0.0.0.0', '--port', '8788']
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/awg-confluence-rag/deploy/hermes-release-manifest.json:/etc/awg-hermes/release-manifest.json:ro
+    environment:
+      AWG_HERMES_CONTROL_SECRET: '${AWG_HERMES_CONTROL_SECRET}'
+      AWG_HERMES_RUNTIME_IMAGE: '${AWG_HERMES_RUNTIME_IMAGE}'
+      AWG_HERMES_RUNTIME_NETWORK: 'awg-hermes-runtime'
+      AWG_HERMES_BROKER_URL: 'http://openwebui:8080'
+      AWG_HERMES_RELEASE_MANIFEST: '/etc/awg-hermes/release-manifest.json'
+    networks:
+      - awg-hermes-control
+    expose: ['8788']
+
+  llama:
+    command: ['--model', '/models/qwen.gguf', '-c', '131072', '-np', '2', '-n', '2048', '--cache-type-k', 'q8_0', '--cache-type-v', 'q8_0', '--host', '0.0.0.0', '--port', '8000']
+    networks:
+      - awg-hermes-runtime
+
+networks:
+  awg-hermes-control:
+    name: awg-hermes-control
+    internal: true
+  awg-hermes-runtime:
+    name: awg-hermes-runtime
+    internal: true
