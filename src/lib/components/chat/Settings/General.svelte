@@ -148,11 +148,11 @@
 			themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 		}
 
-		if (themeToApply === 'dark' && !_theme.includes('oled')) {
-			document.documentElement.style.setProperty('--color-gray-800', '#333');
-			document.documentElement.style.setProperty('--color-gray-850', '#262626');
-			document.documentElement.style.setProperty('--color-gray-900', '#171717');
-			document.documentElement.style.setProperty('--color-gray-950', '#0d0d0d');
+		if (!_theme.includes('oled')) {
+			document.documentElement.style.removeProperty('--color-gray-800');
+			document.documentElement.style.removeProperty('--color-gray-850');
+			document.documentElement.style.removeProperty('--color-gray-900');
+			document.documentElement.style.removeProperty('--color-gray-950');
 		}
 
 		themes
@@ -174,18 +174,18 @@
 					? 'dark'
 					: 'light';
 				console.log('Setting system meta theme color: ' + systemTheme);
-				metaThemeColor.setAttribute('content', systemTheme === 'light' ? '#ffffff' : '#171717');
+				metaThemeColor.setAttribute('content', systemTheme === 'light' ? '#f3f1f6' : '#141316');
 			} else {
 				console.log('Setting meta theme color: ' + _theme);
 				metaThemeColor.setAttribute(
 					'content',
 					_theme === 'dark'
-						? '#171717'
+						? '#141316'
 						: _theme === 'oled-dark'
 							? '#000000'
 							: _theme === 'her'
 								? '#983724'
-								: '#ffffff'
+								: '#f3f1f6'
 				);
 			}
 		}
@@ -199,7 +199,7 @@
 			document.documentElement.style.setProperty('--color-gray-850', '#050505');
 			document.documentElement.style.setProperty('--color-gray-900', '#000000');
 			document.documentElement.style.setProperty('--color-gray-950', '#000000');
-			document.documentElement.classList.add('dark');
+			document.documentElement.classList.add('dark', 'oled-dark');
 		}
 
 		console.log(_theme);

@@ -507,7 +507,7 @@
 								<div class="flex space-x-1.5">
 									<button
 										id="close-edit-message-button"
-										class="px-3.5 py-1.5 bg-white dark:bg-gray-900 hover:bg-gray-100 text-gray-800 dark:text-gray-100 transition rounded-3xl"
+										class="px-3.5 py-1.5 bg-surface hover:bg-gray-100 text-gray-800 dark:text-gray-100 transition rounded-3xl"
 										on:click={() => {
 											edit = false;
 											editedContent = null;
@@ -582,7 +582,7 @@
 														if (idx === 3 && total > 4) {
 															return (
 																acc +
-																` ${$i18n.t('and {{COUNT}} others', {
+																` ${$i18n.t('and {{COUNT}} more', {
 																	COUNT: total - 3
 																})}`
 															);

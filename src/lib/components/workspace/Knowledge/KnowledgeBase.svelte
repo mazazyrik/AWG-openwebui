@@ -1321,7 +1321,7 @@
 		</div>
 
 		<div
-			class="mt-1.5 mb-2 py-1.5 -mx-0 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30 flex-1"
+			class="mt-1.5 mb-2 py-1.5 -mx-0 bg-surface rounded-3xl border border-gray-100/30 dark:border-gray-850/30 flex-1"
 		>
 			{#if isExternalKnowledge}
 				<div class="p-5 flex flex-col gap-4">

@@ -7,21 +7,40 @@
 		var(--app-font-family, -apple-system), BlinkMacSystemFont, 'Inter', 'Vazirmatn', ui-sans-serif,
 		system-ui, 'Segoe UI', Roboto, Ubuntu, Cantarell, 'Noto Sans', sans-serif, 'Helvetica Neue',
 		Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+	--color-brand: #7657c7;
+	--color-brand-foreground: #ffffff;
+	--color-canvas: #f3f1f6;
+	--color-surface: #fbfafd;
+	--color-sidebar: #efedf2;
 	--font-primary: var(--font-sans);
 	--font-secondary: var(--font-sans);
 
-	--color-gray-50: oklch(0.98 0 0);
-	--color-gray-100: oklch(0.94 0 0);
-	--color-gray-200: oklch(0.92 0 0);
-	--color-gray-300: oklch(0.85 0 0);
-	--color-gray-400: oklch(0.77 0 0);
-	--color-gray-500: oklch(0.69 0 0);
-	--color-gray-600: oklch(0.51 0 0);
-	--color-gray-700: oklch(0.42 0 0);
-	--color-gray-800: oklch(0.32 0 0);
-	--color-gray-850: oklch(0.27 0 0);
-	--color-gray-900: oklch(0.2 0 0);
-	--color-gray-950: oklch(0.16 0 0);
+	--color-gray-50: #f3f1f6;
+	--color-gray-100: #efedf2;
+	--color-gray-200: #e2dee8;
+	--color-gray-300: #d0cad9;
+	--color-gray-400: #a59aaf;
+	--color-gray-500: #897e94;
+	--color-gray-600: #6e637a;
+	--color-gray-700: #51465c;
+	--color-gray-800: #302a37;
+	--color-gray-850: #211d27;
+	--color-gray-900: #19171d;
+	--color-gray-950: #141316;
+}
+
+.dark {
+	--color-brand: #b79cff;
+	--color-brand-foreground: #211e26;
+	--color-canvas: #141316;
+	--color-surface: #19171d;
+	--color-sidebar: #171519;
+}
+
+.dark.oled-dark {
+	--color-canvas: #000000;
+	--color-surface: #000000;
+	--color-sidebar: #000000;
 }
 
 /*
@@ -68,14 +87,14 @@
 	}
 
 	input[type='checkbox'] {
-		@apply appearance-none size-3.5 align-middle bg-white border border-gray-300 rounded transition cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-gray-800 dark:border-gray-600 self-center;
+		@apply appearance-none size-3.5 align-middle bg-white border border-gray-300 rounded transition cursor-pointer focus:ring-2 focus:ring-brand focus:outline-none dark:bg-gray-800 dark:border-gray-600 self-center;
 		/* Center the custom mark */
 		display: inline-block;
 		position: relative;
 	}
 
 	input[type='checkbox']:checked {
-		@apply bg-blue-600 border-blue-600;
+		@apply bg-brand border-brand;
 	}
 
 	input[type='checkbox']:after {

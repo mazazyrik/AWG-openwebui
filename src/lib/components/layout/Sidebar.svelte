@@ -60,11 +60,12 @@
 	import { createNewNote, getPinnedNoteList, toggleNotePinnedStatusById } from '$lib/apis/notes';
 	import { updateUserSettings } from '$lib/apis/users';
 	import { createNoteHandler } from '$lib/components/notes/utils';
-	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import UserMenu from './Sidebar/UserMenu.svelte';
 	import ChatItem from './Sidebar/ChatItem.svelte';
 	import Spinner from '../common/Spinner.svelte';
+	import Brand from '../common/Brand.svelte';
 	import Loader from '../common/Loader.svelte';
 	import Folder from '../common/Folder.svelte';
 	import SidebarSection from './Sidebar/Section.svelte';
@@ -930,11 +931,12 @@
 	<button
 		id="sidebar-new-chat-button"
 		class="hidden"
+		aria-label={$i18n.t('New Chat')}
 		on:click={() => {
 			goto('/');
 			newChatHandler();
 		}}
-	/>
+	></button>
 
 	{#if !$mobile && !$showSidebar}
 		<div
@@ -963,14 +965,7 @@
 							<div
 								class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
 							>
-								<!-- LICENSE covers this Open WebUI sidebar logo.
-							Do not alter, remove, obscure, or replace it except as LICENSE permits:
-							https://docs.openwebui.com/license. -->
-								<img
-									src="{WEBUI_BASE_URL}/static/favicon.png"
-									class="sidebar-new-chat-icon size-5 rounded-full group-hover:hidden"
-									alt=""
-								/>
+								<Brand className="sidebar-new-chat-icon h-7 max-w-7 group-hover:hidden" />
 
 								<Sidebar className="size-4 hidden group-hover:flex" />
 							</div>
@@ -1124,9 +1119,9 @@
 			inert={!$showSidebar}
 			class="h-screen max-h-[100dvh] min-h-screen select-none {$mobile
 				? visible
-					? 'bg-gray-50 dark:bg-gray-950 z-50'
+					? 'bg-sidebar z-50'
 					: 'bg-transparent z-0 pointer-events-none'
-				: `bg-gray-50 dark:bg-gray-950 z-50 ${$showSidebar ? '' : 'pointer-events-none'}`} {$isApp
+				: `bg-sidebar z-50 ${$showSidebar ? '' : 'pointer-events-none'}`} {$isApp
 				? `ml-[4.5rem] md:ml-0 `
 				: $mobile
 					? ''
@@ -1149,15 +1144,7 @@
 						draggable="false"
 						on:click={newChatHandler}
 					>
-						<!-- LICENSE covers this Open WebUI sidebar logo.
-					Do not alter, remove, obscure, or replace it except as LICENSE permits:
-					https://docs.openwebui.com/license. -->
-						<img
-							crossorigin="anonymous"
-							src="{WEBUI_BASE_URL}/static/favicon.png"
-							class="sidebar-new-chat-icon size-5 rounded-full"
-							alt=""
-						/>
+						<Brand className="sidebar-new-chat-icon h-7 max-w-7" />
 					</a>
 
 					<a href="/" class="flex flex-1 px-0.5" on:click={newChatHandler}>
@@ -1166,7 +1153,7 @@
 					https://docs.openwebui.com/license. -->
 						<div
 							id="sidebar-webui-name"
-							class=" self-center font-normal text-gray-700 dark:text-gray-200"
+							class=" self-center font-medium tracking-tight text-gray-700 dark:text-gray-200"
 						>
 							{$WEBUI_NAME}
 						</div>

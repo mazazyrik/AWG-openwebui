@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Brand from '$lib/components/common/Brand.svelte';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
@@ -21,11 +22,11 @@
 
 	const i18n: any = getContext('i18n');
 
-	export let modelIds = [];
+	export let modelIds: string[] = [];
 	export let models = [];
 	export let atSelectedModel;
 
-	export let onSelect = (e) => {};
+	export let onSelect: (event: { type: 'prompt'; data: string }) => void = () => {};
 
 	let mounted = false;
 	let selectedModelIdx = 0;
@@ -58,6 +59,7 @@
 
 {#key mounted}
 	<div class="m-auto w-full max-w-[58rem] px-8 lg:px-20">
+		<div class="mb-5"><Brand className="h-10" showName /></div>
 		<div class="flex justify-start">
 			<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 200 }}>
 				{#each models as model, modelIdx}
@@ -80,10 +82,7 @@
 								alt="logo"
 								draggable="false"
 								on:error={(e) => {
-									// LICENSE covers this Open WebUI fallback logo.
-									// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-									// https://docs.openwebui.com/license.
-									e.currentTarget.src = '/favicon.png';
+									e.currentTarget.src = `${WEBUI_BASE_URL}/static/favicon.png`;
 								}}
 							/>
 						</Tooltip>

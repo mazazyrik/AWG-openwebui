@@ -417,12 +417,12 @@ input[type='number'] {
 
 :focus-visible:not(.ProseMirror):not([contenteditable='true']):not(input):not(textarea),
 .focus-ring:focus-visible {
-	outline: 2px solid theme(--color-blue-500);
+	outline: 2px solid var(--color-brand);
 	outline-offset: -2px;
 }
 
 html.high-contrast :is(input, textarea, [contenteditable='true'], .ProseMirror):focus-visible {
-	outline: 2px solid theme(--color-blue-500);
+	outline: 2px solid var(--color-brand);
 	outline-offset: -2px;
 }
 
@@ -758,13 +758,13 @@ html.high-contrast.dark .ProseMirror p.is-editor-empty:first-child::before {
 }
 
 body {
-	background: #fff;
-	color: #000;
+	background: var(--color-canvas);
+	color: #211e26;
 }
 
 .dark body {
-	background: #171717;
-	color: #eee;
+	background: var(--color-canvas);
+	color: #eeeaf3;
 }
 
 /* Position the handle relative to each LI */
@@ -1012,4 +1012,18 @@ html.high-contrast:not(.dark) .shimmer {
 	background: none;
 	color: var(--color-gray-800);
 	-webkit-text-fill-color: var(--color-gray-800);
+}
+
+::selection {
+	background: color-mix(in srgb, var(--color-brand) 30%, transparent);
+}
+
+.awg-welcome {
+	background:
+		radial-gradient(
+			ellipse at top right,
+			color-mix(in srgb, var(--color-brand) 12%, transparent),
+			transparent 60%
+		),
+		var(--color-canvas);
 }

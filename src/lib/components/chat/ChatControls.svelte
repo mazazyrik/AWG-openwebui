@@ -314,13 +314,13 @@
 		closeOnDragBelowMinWidth
 		onClose={() => showControls.set(false)}
 		storageKey="chatControlsSize"
-		className="h-full z-10 bg-white dark:bg-gray-900"
+		className="h-full z-10 bg-surface"
 	>
 		<div class="flex h-full max-h-full min-h-full">
 			<div
 				class="w-full {specialPanel && !$showCallOverlay
 					? ' '
-					: 'bg-white dark:bg-gray-900'} z-40 pointer-events-auto {activeTab === 'files'
+					: 'bg-surface'} z-40 pointer-events-auto {activeTab === 'files'
 					? ''
 					: 'overflow-y-auto'} scrollbar-hidden"
 				id="controls-container"

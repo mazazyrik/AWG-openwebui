@@ -28,7 +28,7 @@ from open_webui.integrations.confluence.grounding_filter import (
     project_list_fallback,
     relevant_excerpt,
 )
-from open_webui.integrations.confluence.identity import load_awg_profile, render_system_prompt
+from open_webui.integrations.confluence.identity import PROFILE_PATH, load_awg_profile, render_system_prompt
 from open_webui.integrations.confluence.runtime import (
     attest_awg_attachment,
     build_awg_response,
@@ -339,6 +339,30 @@ async def test_hydration_marks_failed_restrictions_as_unavailable(monkeypatch):
     sources, failed = await Filter()._hydrate_sources([SOURCE], 'Яндекс')
     assert sources == []
     assert failed is True
+
+
+@pytest.mark.asyncio
+async def test_canonical_hydration_checks_restrictions_before_reading_page(monkeypatch):
+    calls = []
+
+    async def call(self, client, name, args):
+        calls.append((name, args))
+        if name == 'confluence_get_page_restrictions':
+            return {'read': {'users': [], 'groups': []}}
+        return canonical('230457824', 'SERVITY', 'Подтверждённый проектный контент')
+
+    monkeypatch.setattr(ConfluencePageClient, '_call', call)
+
+    sources, failed = await Filter()._hydrate_sources(
+        [],
+        'Какую разработку по геймификации мы делали?',
+        canonical_page_id='230457824',
+    )
+
+    assert failed is False
+    assert [name for name, _ in calls] == ['confluence_get_page_restrictions', 'confluence_get_page']
+    assert all(args['page_id'] == '230457824' for _, args in calls)
+    assert sources[0]['page_id'] == '230457824'
 
 
 def test_third_turn_keeps_original_project():
@@ -953,6 +977,47 @@ def test_explicit_external_yandex_first_person_question_stays_out_of_scope():
     assert decision.route == 'out_of_scope'
 
 
+def test_kratno_delivery_question_uses_canonical_route():
+    decision = route_request(messages('Какую разработку по геймификации мы делали?'))
+
+    assert (decision.route, decision.scope_decision) == ('confluence_grounded', 'awg_kratno_delivery_question')
+
+
+@pytest.mark.asyncio
+async def test_kratno_delivery_question_hydrates_its_canonical_page_without_search():
+    instance = Filter()
+    instance._grounded_sources = AsyncMock(return_value=([SOURCE], False, None))
+    request = SimpleNamespace(state=SimpleNamespace())
+
+    await attached_inlet(
+        instance,
+        {'messages': messages('Какую разработку по геймификации мы делали?')},
+        request,
+    )
+
+    assert instance._grounded_sources.await_args.args[1] == '230457824'
+
+
+def test_kratno_status_follow_up_inherits_canonical_route():
+    decision = route_request(messages('Какую разработку по геймификации мы делали?', 'А какой сейчас статус?'))
+
+    assert (decision.route, decision.scope_decision) == ('confluence_grounded', 'awg_kratno_delivery_question')
+
+
+@pytest.mark.parametrize('follow_up', ['Какой статус у Спортмастера?', 'Какой статус у Яндекса?'])
+def test_explicit_other_project_follow_up_does_not_inherit_kratno_route(follow_up):
+    decision = route_request(messages('Какую разработку по геймификации мы делали?', follow_up))
+
+    assert decision.scope_decision != 'awg_kratno_delivery_question'
+
+
+@pytest.mark.parametrize('question', ['Мы любим геймификацию?', 'Какая разработка по геймификации у Спортмастера?'])
+def test_non_work_questions_do_not_use_kratno_route(question):
+    decision = route_request(messages(question))
+
+    assert decision.scope_decision != 'awg_kratno_delivery_question'
+
+
 def test_profile_and_prompt_use_official_awg_name():
     profile = load_awg_profile()
     prompt = render_system_prompt(profile)
@@ -967,6 +1032,48 @@ def test_profile_and_prompt_use_official_awg_name():
     assert '«мы», «у нас», «наш», «наша», «наши»' in prompt
     assert 'только по источникам Confluence' in prompt
     assert all(project not in prompt for project in ('YANDEX', 'Mindbox', 'Север'))
+
+
+def test_v1_profile_without_canonical_routes_loads_empty_routes(tmp_path):
+    profile_data = json.loads(PROFILE_PATH.read_text())
+    del profile_data['canonical_page_routes']
+    path = tmp_path / 'awg_profile.json'
+    path.write_text(json.dumps(profile_data))
+
+    assert load_awg_profile(path).canonical_page_routes == ()
+
+
+@pytest.mark.parametrize(
+    'route',
+    [
+        {
+            'trigger': 'unsupported_trigger',
+            'page_id': '230457824',
+            'title': 'Кратно',
+            'source_url': 'https://conf.awg.ru/pages/230457824',
+            'owner': 'AWG GPT product owner',
+            'as_of': '2026-09-17',
+            'provenance': 'approved canonical Confluence page',
+        },
+        {
+            'trigger': 'awg_kratno_delivery_question',
+            'page_id': 'invalid',
+            'title': 'Кратно',
+            'source_url': 'https://conf.awg.ru/pages/invalid',
+            'owner': 'AWG GPT product owner',
+            'as_of': '2026-09-17',
+            'provenance': 'approved canonical Confluence page',
+        },
+    ],
+)
+def test_malformed_canonical_profile_route_is_rejected(tmp_path, route):
+    profile_data = json.loads(PROFILE_PATH.read_text())
+    profile_data['canonical_page_routes'] = [route]
+    path = tmp_path / 'awg_profile.json'
+    path.write_text(json.dumps(profile_data))
+
+    with pytest.raises(ValueError):
+        load_awg_profile(path)
 
 
 @pytest.mark.parametrize('method', ['inlet', 'request', 'outlet'])
