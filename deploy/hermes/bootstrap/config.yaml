@@ -28,7 +28,7 @@ gateway:
 
 mcp_servers:
   awg:
-    command: python
+    command: /opt/hermes/.venv/bin/python
     args: [/opt/awg/awg_mcp.py]
     enabled: true
     tools:

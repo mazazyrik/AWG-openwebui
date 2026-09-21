@@ -62,6 +62,7 @@ def test_runtime_config_restricts_api_server_toolsets():
     assert 'platform_toolsets:\n  api_server:' in config
     assert '\ntoolsets:' not in config
     assert '    - mcp-awg' in config
+    assert 'command: /opt/hermes/.venv/bin/python' in config
 
 
 @pytest.mark.asyncio
