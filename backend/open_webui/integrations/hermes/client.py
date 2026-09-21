@@ -249,7 +249,7 @@ class HermesClient:
                 'url': source.get('url'),
                 'page_id': source.get('page_id'),
                 'version': source.get('version'),
-                'content': source.get('content', '')[:8000],
+                'content': (source.get('text') or source.get('content') or '')[:8000],
             }
             for source in (awg_state.sources if awg_state else ())
         ]
