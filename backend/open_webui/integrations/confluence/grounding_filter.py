@@ -68,6 +68,12 @@ CITATION_FAILURE = (
     'Уточните проект, клиента, команду или предмет вопроса — сервер повторно проверит Confluence.'
 )
 SAFE_RESPONSES = {UNKNOWN, CLARIFY}
+HERMES_NO_LOOKUP_SCOPES = {
+    'hermes_native_assistant_meta',
+    'hermes_native_clarification',
+    'hermes_native_greeting_help',
+    'hermes_native_out_of_scope',
+}
 REMOVABLE_COVERAGE_LIMITATION = 'Это не полный список компании; принадлежность к её штату здесь не подтверждена.'
 COVERAGE_LIMITATIONS = {
     'Это только подтверждённая часть ответа.',
@@ -1160,6 +1166,7 @@ def finalize_awg_response(state: AwgRequestState | None, provider_answer: str) -
             not in {
                 'general_work_safe_transform',
                 'general_work_task',
+                *HERMES_NO_LOOKUP_SCOPES,
                 'hermes_native_memory',
             }
             or contract['uses_corporate_facts']
@@ -1603,6 +1610,13 @@ class Filter:
         if decision.route == 'memory_command' and hermes_mode:
             decision = RouteDecision('general_work', 'hermes_native_memory', decision.memory_operation)
 
+        if hermes_mode and decision.route not in {'confluence_grounded', 'general_work'}:
+            decision = RouteDecision(
+                'general_work',
+                f'hermes_native_{decision.route}',
+                decision.memory_operation,
+            )
+
         if decision.route == 'memory_command':
             answer = await self._memory_response(__request__, __user__, question, approved_aliases)
             state = self._state(
@@ -1620,7 +1634,10 @@ class Filter:
             return body
 
         if decision.route == 'general_work' and hermes_mode:
-            sources, unavailable, unavailable_reason = await self._grounded_sources([question])
+            if decision.scope_decision in HERMES_NO_LOOKUP_SCOPES:
+                sources, unavailable, unavailable_reason = [], False, None
+            else:
+                sources, unavailable, unavailable_reason = await self._grounded_sources([question])
             state = self._state(
                 decision,
                 model_id=model_id,
@@ -1635,15 +1652,25 @@ class Filter:
                 approved_aliases=approved_aliases,
             )
             set_awg_request_state(__request__, model_id, invocation_id, state)
+            native_directive = {
+                'hermes_native_assistant_meta': (
+                    'Explain briefly that Hermes is the agent engine and Qwen3.8 is the underlying model. '
+                ),
+                'hermes_native_clarification': 'Ask the user to clarify the AWG project, client, process, or document. ',
+                'hermes_native_greeting_help': 'Reply briefly, introduce AWG GPT, and offer help with AWG work. ',
+                'hermes_native_out_of_scope': 'Decline briefly because the request is unrelated to AWG work. ',
+            }.get(decision.scope_decision, '')
             self._append_policy(
                 body,
-                'FINAL_ROUTE: general_work. Complete the work using attachments or general model knowledge. '
+                'FINAL_ROUTE: general_work. '
+                + native_directive
+                + 'Complete the work using attachments or general model knowledge. '
                 'State that provenance when it matters. Do not assert AWG facts without Confluence evidence. '
                 'External web access and Confluence writes are forbidden. '
                 f'CONFLUENCE_PREFLIGHT_AVAILABLE: {str(not unavailable).lower()}. '
                 'SOURCE_DATA_JSON:\n' + json.dumps(sources, ensure_ascii=False) + '\nSOURCE_DATA_JSON_END',
             )
-            self._log_route(state, lookup=True)
+            self._log_route(state, lookup=decision.scope_decision not in HERMES_NO_LOOKUP_SCOPES)
             return body
 
         if decision.route != 'confluence_grounded':

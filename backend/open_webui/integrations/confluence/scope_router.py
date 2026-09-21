@@ -77,6 +77,11 @@ GROUNDED_INTENT_RE = re.compile(
     r'polic(?:y|ies)|meetings?|status(?:es)?|confluence)\b',
     re.IGNORECASE,
 )
+INTERNAL_PROJECT_REFERENCE_RE = re.compile(
+    r'\b(?:о|об|про)\s+(?:наш\w*\s+)?проект\w*\b|'
+    r'\babout\s+(?:our\s+)?(?:the\s+)?[^.!?\n]{0,80}\bproject\b',
+    re.IGNORECASE,
+)
 DELIVERY_QUESTION_RE = re.compile(
     r'\b(?:какую|какие|что|чем|what|which)\b.{0,80}'
     r'\b(?:разработк\w*|внедрен\w*|интеграц\w*|геймификац\w*|релиз\w*|'
@@ -295,6 +300,8 @@ def _grounded_scope_decision(
         return 'awg_first_person_intent'
     if _has_prior_awg_anchor(messages):
         return 'confirmed_awg_continuation'
+    if INTERNAL_PROJECT_REFERENCE_RE.search(question):
+        return 'awg_project_reference'
     if UNRELATED_COMPANY_RE.search(question):
         return None
     if approved_alias:
