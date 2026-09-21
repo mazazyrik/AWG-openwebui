@@ -234,11 +234,7 @@ def _load_canonical_page_routes(value: object) -> tuple[CanonicalPageRoute, ...]
             raise ValueError(f'AWG profile field {location}.page_id is invalid')
         source_url = _require_text(item['source_url'], f'{location}.source_url', max_chars=500)
         parsed = urlsplit(source_url)
-        if (
-            parsed.scheme != 'https'
-            or parsed.netloc != 'conf.awg.ru'
-            or f'/pages/{page_id}' not in parsed.path
-        ):
+        if parsed.scheme != 'https' or parsed.netloc != 'conf.awg.ru' or f'/pages/{page_id}' not in parsed.path:
             raise ValueError(f'AWG profile field {location}.source_url is invalid')
         routes.append(
             CanonicalPageRoute(

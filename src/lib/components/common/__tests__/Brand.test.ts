@@ -17,7 +17,10 @@ type SvelteNode = {
 	[key: string]: unknown;
 };
 
-const source = readFileSync(resolve(process.cwd(), 'src/lib/components/common/Brand.svelte'), 'utf8');
+const source = readFileSync(
+	resolve(process.cwd(), 'src/lib/components/common/Brand.svelte'),
+	'utf8'
+);
 const ast = parse(source, { modern: true });
 
 const collectNodes = (value: unknown): SvelteNode[] => {
@@ -53,8 +56,8 @@ describe('application brand', () => {
 		expect(APP_NAME).toBe('AWG GPT');
 		expect(images).toHaveLength(2);
 		expect(
-			images.map((image) =>
-				collectNodes(attribute(image, 'src')).find((node) => node.type === 'Text')?.data
+			images.map(
+				(image) => collectNodes(attribute(image, 'src')).find((node) => node.type === 'Text')?.data
 			)
 		).toEqual(['/static/awg-logo.svg', '/static/awg-logo-dark.svg']);
 

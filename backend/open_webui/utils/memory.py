@@ -189,9 +189,7 @@ async def _save_awg_memory(
 
     value = _validate_awg_memory_value(command.value)
     alias = _validate_awg_memory_value(command.key) if command.kind == 'alias' else None
-    reserved = {'awg', 'avg', 'авг', 'awg gpt', 'avg gpt', 'авг gpt'} | {
-        item.casefold() for item in reserved_aliases
-    }
+    reserved = {'awg', 'avg', 'авг', 'awg gpt', 'avg gpt', 'авг gpt'} | {item.casefold() for item in reserved_aliases}
     if alias and alias.casefold() in reserved:
         raise HTTPException(status_code=400, detail='Reserved aliases cannot be changed')
     fingerprint = hashlib.sha256((alias or value).casefold().encode('utf-8')).hexdigest()[:16]
@@ -213,14 +211,8 @@ async def _save_awg_memory(
             for memory in memories
             if memory.meta.get('kind') == command.kind
             and (
-                (
-                    command.kind == 'preference'
-                    and memory.meta.get('value', '').casefold() == value.casefold()
-                )
-                or (
-                    command.kind == 'alias'
-                    and memory.meta.get('alias', '').casefold() == (alias or '').casefold()
-                )
+                (command.kind == 'preference' and memory.meta.get('value', '').casefold() == value.casefold())
+                or (command.kind == 'alias' and memory.meta.get('alias', '').casefold() == (alias or '').casefold())
             )
         ),
         None,
@@ -304,9 +296,7 @@ async def execute_awg_memory_command(
     """Apply an explicit AWG alias or preference command for the authenticated user."""
     user = UserModel(**user_data)
     await _check_awg_memory_permission(user)
-    memories = _awg_memory_rows(
-        await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []
-    )
+    memories = _awg_memory_rows(await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or [])
     if command.operation == 'list':
         return {
             'status': 'read',
@@ -323,9 +313,7 @@ async def get_awg_alias_expansions(request, user_data: dict, question: str) -> l
     user = UserModel(**user_data)
     await _check_awg_memory_permission(user)
     matches = []
-    for memory in _awg_memory_rows(
-        await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []
-    ):
+    for memory in _awg_memory_rows(await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []):
         if memory.meta.get('kind') != 'alias':
             continue
         alias = _validate_awg_memory_value(memory.meta.get('alias'), allow_awg_fact=True)
@@ -581,9 +569,7 @@ def model_allows_memory(model: dict | None) -> bool:
 
 
 async def _add_awg_preference_context(form_data: dict, user) -> dict:
-    memories = _awg_memory_rows(
-        await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or []
-    )
+    memories = _awg_memory_rows(await Memories.get_memories_by_user_id(user.id, include_awg_gpt=True) or [])
     preferences = []
     for memory in memories:
         if memory.meta.get('kind') != 'preference':

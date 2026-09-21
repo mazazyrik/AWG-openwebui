@@ -7,6 +7,7 @@ rag_services='/opt/awg-confluence-rag/deploy/docker-compose.services.yml'
 rag_openwebui='/opt/awg-confluence-rag/deploy/docker-compose.openwebui.yml'
 rag_ssh_tunnel='/opt/awg-confluence-rag/deploy/docker-compose.ssh-tunnel.yml'
 awg_override='/root/Docker/docker-compose.awg-openwebui.yml'
+hermes_overlay='/opt/awg-confluence-rag/deploy/docker-compose.hermes.yml'
 
 require_release_target() {
     expected_image=${AWG_OPENWEBUI_IMAGE:-}
@@ -296,8 +297,38 @@ asyncio.run(check())
 PY
         echo retrieval-ready
         ;;
+    hermes-compose)
+        ssh -o BatchMode=yes "$server" "jq -e '.hermes_release == \"v2026.9.14\" and .hermes_upstream_commit == \"345cd2b057a452236de401d3534b8502a7465e8d\" and (.upstream_base_image | type == \"string\" and contains(\"@sha256:\")) and (.runtime_image | type == \"string\" and contains(\"@sha256:\")) and (.verified_at | type == \"string\" and endswith(\"Z\"))' '/opt/awg-confluence-rag/deploy/hermes-release-manifest.json' >/dev/null"
+        ssh -o BatchMode=yes "$server" "docker compose -f '$compose' -f '$hermes_overlay' config --quiet && docker compose -f '$compose' -f '$hermes_overlay' config --format json" | jq -e '
+            .services["awg-hermes-provisioner"].read_only == true and
+            (.services["awg-hermes-provisioner"].cap_drop | index("ALL")) and
+            (.services["awg-hermes-provisioner"].security_opt | index("no-new-privileges:true")) and
+            ((.services["awg-hermes-provisioner"].ports // []) | length == 0) and
+            (.services["awg-hermes-provisioner"].volumes | any(.type == "bind" and .source == "/opt/awg-confluence-rag/deploy/hermes-release-manifest.json" and .target == "/etc/awg-hermes/release-manifest.json" and .read_only == true)) and
+            (.services.openwebui.environment.AWG_HERMES_BROKER_URL == "http://openwebui:8080") and
+            (.networks["awg-hermes-runtime"].internal == true) and
+            (.services.llama.command | join(" ") | contains("-c 131072 -np 2")) and
+            (.services.llama.command | join(" ") | contains("q8_0"))
+        ' >/dev/null
+        echo hermes-compose-ready
+        ;;
+    hermes-runtime)
+        ssh -o BatchMode=yes "$server" 'set -eu; ids=$(docker ps -q --filter label=com.awg.hermes.managed=true); test -n "$ids"; for id in $ids; do docker inspect "$id" --format "{{json .}}" | jq -e '\''
+            .Config.User != "" and .Config.User != "0" and
+            .Config.Entrypoint == ["/opt/awg/runtime_supervisor.py"] and
+            .Config.Cmd == ["gateway","run","--no-supervise"] and
+            (.Config.Env | all((startswith("OPENAI_API_KEY=") or startswith("AWG_HERMES_QWEN_API_KEY=")) | not)) and
+            (.HostConfig.CapDrop | index("ALL")) and
+            .HostConfig.ReadonlyRootfs == true and
+            (.HostConfig.SecurityOpt | index("no-new-privileges:true")) and
+            .HostConfig.PidsLimit <= 256 and
+            (.HostConfig.Binds | all(contains("/opt/data") or contains("/workspace"))) and
+            (.HostConfig.Binds | all(contains("docker.sock") | not)) and
+            (.NetworkSettings.Ports | to_entries | all(.value == null))
+        '\'' >/dev/null; docker top "$id" -n -eo uid,gid,args | awk '\''$1 == 10000 && $2 == 10000 && tolower($0) ~ /gateway/ { ok=1 } END { exit(ok ? 0 : 1) }'\''; done; echo hermes-runtime-ready'
+        ;;
     *)
-        echo 'usage: verify-awg-openwebui-deployment.sh compose|backup|containers|network|module|dependencies|mcp|retrieval' >&2
+        echo 'usage: verify-awg-openwebui-deployment.sh compose|backup|containers|network|module|dependencies|mcp|retrieval|hermes-compose|hermes-runtime' >&2
         exit 2
         ;;
 esac

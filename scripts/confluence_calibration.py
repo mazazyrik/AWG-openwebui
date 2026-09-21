@@ -73,7 +73,9 @@ async def fixture_hydration(sources, query):
 def uses_awg_typed_runtime(instance) -> bool:
     """Return whether a candidate builds the canonical AWG request state."""
     state_builder = getattr(instance, '_state', None)
-    return callable(state_builder) and getattr(state_builder, '__globals__', {}).get('AwgRequestState') is AwgRequestState
+    return (
+        callable(state_builder) and getattr(state_builder, '__globals__', {}).get('AwgRequestState') is AwgRequestState
+    )
 
 
 def baseline_response_kind(answer: str, instance) -> str:
@@ -120,7 +122,8 @@ def evaluate(answer: str, expected: dict, sources: list[dict], response_kind: st
         nonconfirmation = unknown_total or bool(
             re.search(
                 r'(?:не подтверждает|не подтвержден[оа]?|не позволяет подтвердить|нельзя подтвердить)'
-                r'[^.\n]{0,80}(?:реестр|наличие|существование)', prose
+                r'[^.\n]{0,80}(?:реестр|наличие|существование)',
+                prose,
             )
             or re.search(r'(?:реестр|наличие|существование)[^.\n]{0,80}(?:не подтвержден|не подтверждает)', prose)
         )
@@ -130,11 +133,14 @@ def evaluate(answer: str, expected: dict, sources: list[dict], response_kind: st
         subject = expected['subject']
         subject_present = (
             any(token in prose for token in ('количеств', 'сколько', 'числ'))
-            if subject == 'count' else subject == 'registry' and 'реестр' in prose
+            if subject == 'count'
+            else subject == 'registry' and 'реестр' in prose
         )
         citation_required = not controlled_unknown
-        outcome = not numeric_total and not unsafe and (
-            controlled_unknown or (response_kind == 'answer' and nonconfirmation and subject_present)
+        outcome = (
+            not numeric_total
+            and not unsafe
+            and (controlled_unknown or (response_kind == 'answer' and nonconfirmation and subject_present))
         )
     elif expected['kind'] == 'partial':
         outcome = response_kind == 'answer' and any(

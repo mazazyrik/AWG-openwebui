@@ -2858,7 +2858,9 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 )
 
         terminal_request = (
-            await get_terminal_request_info(request, user, metadata, extra_params) if terminal_id or terminal_skill_ids else None
+            await get_terminal_request_info(request, user, metadata, extra_params)
+            if terminal_id or terminal_skill_ids
+            else None
         )
 
         listed_terminal_skills = []
@@ -2886,7 +2888,9 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     sid = skill['id']
                     if sid in mentioned_skill_ids or not use_builtin_tools:
                         skill_name = unquote(sid.removeprefix(terminal_skill_prefix))
-                        loaded = await get_terminal_skill(request, user.model_dump(), metadata, skill_name, extra_params)
+                        loaded = await get_terminal_skill(
+                            request, user.model_dump(), metadata, skill_name, extra_params
+                        )
                         if loaded:
                             form_data['messages'] = add_or_update_system_message(
                                 format_terminal_skill_context(loaded),

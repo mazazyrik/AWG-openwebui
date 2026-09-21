@@ -55,8 +55,6 @@ describe('installable application branding', () => {
 		expect(appHtml).toContain('href="/static/favicon.png"');
 		expect(appHtml).toContain('href="/static/favicon.svg"');
 		expect(appHtml).toContain('href="/static/favicon.ico"');
-		expect(rootLayout).toContain(
-			'href="{WEBUI_BASE_URL}/static/favicon.png"'
-		);
+		expect(rootLayout).toContain('href="{WEBUI_BASE_URL}/static/favicon.png"');
 	});
 });

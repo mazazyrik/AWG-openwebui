@@ -20,7 +20,7 @@ from open_webui.utils.misc import (
 STATE_KEY = 'awg_confluence_grounding'
 ATTESTATION_KEY = 'awg_confluence_attestations'
 INVOCATION_KEY = 'awg_confluence_invocations'
-STATE_VERSION = 4
+STATE_VERSION = 6
 MAX_PROVIDER_RESPONSE_BYTES = 65_536
 MAX_PROVIDER_RESPONSE_CHARS = 16_384
 
@@ -31,6 +31,7 @@ Route = Literal[
     'corporate_profile',
     'confluence_grounded',
     'clarification',
+    'general_work',
     'out_of_scope',
 ]
 ResponseKind = Literal[
@@ -49,6 +50,7 @@ ROUTE_RESPONSE_KINDS: dict[Route, ResponseKind] = {
     'corporate_profile': 'conversational',
     'confluence_grounded': 'grounded_fact',
     'clarification': 'clarification',
+    'general_work': 'conversational',
     'out_of_scope': 'policy_refusal',
 }
 
@@ -71,8 +73,11 @@ class AwgRequestState:
     client_stream: bool
     provider_required: bool
     deterministic_answer: str | None
+    structured_general_work: bool = False
     grounded_fallback: str | None = None
     grounded_fallback_mode: GroundedFallbackMode = 'conditional'
+    request_text: str = ''
+    approved_aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -231,7 +236,7 @@ def get_awg_request_state(
         return True, None
     if state.response_kind != ROUTE_RESPONSE_KINDS.get(state.route):
         return True, None
-    if state.provider_required != (state.response_kind == 'grounded_fact'):
+    if state.provider_required != (state.route in {'confluence_grounded', 'general_work'}):
         return True, None
     if state.provider_required == (state.deterministic_answer is not None):
         return True, None

@@ -52,9 +52,9 @@ describe('branded application surfaces', () => {
 		expect(brands[0].attributes?.map((attribute) => attribute.name)).not.toContain('showName');
 		expect(componentsNamed(nodes, 'MessageInput')).toHaveLength(1);
 		expect(nodes.some((node) => node.type === 'RegularElement' && node.name === 'img')).toBe(false);
-		expect(nodes.some((node) => node.type === 'Identifier' && node.name === 'selectedModelName')).toBe(
-			false
-		);
+		expect(
+			nodes.some((node) => node.type === 'Identifier' && node.name === 'selectedModelName')
+		).toBe(false);
 		expect(
 			nodes.some((node) => node.type === 'Identifier' && node.name === 'selectedModelDescription')
 		).toBe(false);
