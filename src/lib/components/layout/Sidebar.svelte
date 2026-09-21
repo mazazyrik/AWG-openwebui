@@ -928,15 +928,15 @@
 		}}
 	/>
 
-		<button
-			id="sidebar-new-chat-button"
-			class="hidden"
-			aria-label={$i18n.t('New Chat')}
-			on:click={() => {
-				goto('/');
-				newChatHandler();
-			}}
-		></button>
+	<button
+		id="sidebar-new-chat-button"
+		class="hidden"
+		aria-label={$i18n.t('New Chat')}
+		on:click={() => {
+			goto('/');
+			newChatHandler();
+		}}
+	></button>
 
 	{#if !$mobile && !$showSidebar}
 		<div
