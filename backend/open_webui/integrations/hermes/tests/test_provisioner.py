@@ -56,6 +56,14 @@ def test_capability_archive_is_owned_by_runtime_user_and_mode_0600():
         assert bundle.extractfile(member).read() == b'secret'
 
 
+def test_runtime_config_restricts_api_server_toolsets():
+    config = provisioner.RUNTIME_CONFIG.decode()
+
+    assert 'platform_toolsets:\n  api_server:' in config
+    assert '\ntoolsets:' not in config
+    assert '    - mcp-awg' in config
+
+
 @pytest.mark.asyncio
 async def test_gateway_identity_requires_uid_gid_10000(monkeypatch):
     docker = AsyncMock(return_value={'Processes': [['42', '10000', '10000', 'hermes gateway run']]})

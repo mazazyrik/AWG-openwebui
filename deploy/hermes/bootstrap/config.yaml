@@ -4,12 +4,13 @@ model:
   base_url: '${OPENAI_BASE_URL}'
   context_length: 65536
 
-toolsets:
-  - terminal
-  - file
-  - skills
-  - memory
-  - mcp-awg
+platform_toolsets:
+  api_server:
+    - terminal
+    - file
+    - skills
+    - memory
+    - mcp-awg
 
 terminal:
   backend: local
