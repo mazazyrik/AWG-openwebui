@@ -62,6 +62,28 @@ def make_client(user_id, redis):
     return HermesClient(request, SimpleNamespace(id=user_id), {}, {'id': 'awg-qwen'})
 
 
+def test_grounded_instructions_include_source_ids_and_exact_citation_format():
+    client = make_client('user-a', RedisStub())
+    state = SimpleNamespace(
+        route='confluence_grounded',
+        sources=(
+            {
+                'id': 'S1',
+                'title': 'Project page',
+                'url': 'https://conf.awg.ru/pages/1',
+                'page_id': '1',
+                'version': 2,
+                'content': 'Verified project fact.',
+            },
+        ),
+    )
+
+    instructions = client._instructions(state, [], True)
+
+    assert '"id":"S1"' in instructions
+    assert '`[S<number>] <matching source URL>`' in instructions
+
+
 @pytest.mark.asyncio
 async def test_same_user_lease_serializes_and_release_is_owner_checked(monkeypatch):
     redis = RedisStub()

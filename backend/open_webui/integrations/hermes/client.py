@@ -244,6 +244,7 @@ class HermesClient:
     def _instructions(self, awg_state, authorized_files: list[dict[str, str]], persistent_memory: bool) -> str:
         evidence = [
             {
+                'id': source.get('id'),
                 'title': source.get('title') or source.get('name'),
                 'url': source.get('url'),
                 'page_id': source.get('page_id'),
@@ -259,6 +260,13 @@ class HermesClient:
             if awg_state and awg_state.route == 'general_work'
             else ''
         )
+        grounded_citations = (
+            ' For corporate grounded answers, cite every factual paragraph with the exact paired format '
+            '`[S<number>] <matching source URL>` using the supplied evidence id and URL. Do not omit either '
+            'part and do not invent identifiers or URLs.'
+            if awg_state and awg_state.route != 'general_work'
+            else ''
+        )
         return (
             'You are AWG GPT running through Hermes. Corporate claims must be supported by the supplied '
             'Confluence evidence or by a fresh search_confluence result and must cite the source URL. '
@@ -267,7 +275,7 @@ class HermesClient:
             'but state that provenance and never present it as an AWG fact. Use only attachment IDs listed below. '
             f'Persistent memory writes are {"enabled" if persistent_memory else "disabled for this temporary chat"}. '
             f'Authorized attachments: {JSONCodec.dumps(authorized_files)}\n'
-            f'Preflight Confluence evidence: {JSONCodec.dumps(evidence)}{structured}'
+            f'Preflight Confluence evidence: {JSONCodec.dumps(evidence)}{structured}{grounded_citations}'
         )
 
     async def run(
