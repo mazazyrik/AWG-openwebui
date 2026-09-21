@@ -86,7 +86,7 @@ jobs:
               "https://api.github.com/users/mazazyrik/packages/container/${package}")
             case "$status" in
               200) echo "Package ${package} is publicly visible" >&2; exit 1 ;;
-              404) ;;
+              401|403|404) ;;
               *) echo "Anonymous package visibility check failed with HTTP $status" >&2; exit 1 ;;
             esac
           done
@@ -152,14 +152,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for package in hermes-agent-upstream awg-hermes-runtime; do
-            status=$(curl --silent --show-error \
-              --output /dev/null \
-              --write-out '%{http_code}' \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/users/mazazyrik/packages/container/${package}")
-            test "$status" = '404'
+          anonymous_config="$RUNNER_TEMP/anonymous-docker"
+          mkdir -p "$anonymous_config"
+          printf '%s\n' '{"auths":{}}' >"$anonymous_config/config.json"
+
+          for image in \
+            "$(jq -r '.upstream_base_image' "$RUNNER_TEMP/hermes-release-manifest.json")" \
+            "$(jq -r '.runtime_image' "$RUNNER_TEMP/hermes-release-manifest.json")"; do
+            if DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$image" >/dev/null 2>&1; then
+              echo "Image ${image} is anonymously readable" >&2
+              exit 1
+            fi
           done
 
       - name: Upload immutable release manifest
