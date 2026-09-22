@@ -1182,6 +1182,25 @@ def finalize_awg_response(state: AwgRequestState | None, provider_answer: str) -
                 return AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
             return _finalize_grounded_provider_answer(answer, list(state.sources))
         return AwgFinalAnswer(answer, 'conversational')
+    if provider_answer.startswith('AWG_HERMES_RESULT:'):
+        try:
+            contract = json.loads(provider_answer.removeprefix('AWG_HERMES_RESULT:'))
+        except (TypeError, ValueError):
+            return AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
+        if (
+            set(contract) != {'answer', 'uses_corporate_facts', 'evidence_urls'}
+            or not isinstance(contract['answer'], str)
+            or not isinstance(contract['evidence_urls'], list)
+            or any(not isinstance(url, str) for url in contract['evidence_urls'])
+        ):
+            return AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
+        sources = list(state.sources)
+        by_url = {source['url']: source for source in sources}
+        urls = contract['evidence_urls']
+        if not urls or not set(urls) <= set(by_url):
+            return AwgFinalAnswer(CITATION_FAILURE, 'grounded_no_evidence')
+        references = ' '.join(f'[{by_url[url]["id"]}] {url}' for url in dict.fromkeys(urls))
+        return _finalize_grounded_provider_answer(f'{contract["answer"].strip()} {references}', sources)
     if state.unavailable:
         return AwgFinalAnswer(UNAVAILABLE, 'grounded_no_evidence')
     if not state.sources:
