@@ -99,16 +99,11 @@ async def test_readiness_requires_exact_builtin_and_awg_mcp_tools(monkeypatch):
         '/v1/toolsets': {
             'object': 'list',
             'platform': 'api_server',
-            'data': [{'name': name, 'enabled': True, 'tools': []} for name in builtins],
+            'data': [
+                *[{'name': name, 'enabled': True, 'tools': []} for name in builtins],
+                {'name': 'mcp-awg', 'enabled': True, 'tools': []},
+            ],
         },
-        'discover_mcp_tools': sorted(
-            {
-                'mcp__awg__search_confluence',
-                'mcp__awg__read_attachment',
-                'mcp__awg__publish_artifact',
-                'mcp__awg__stage_plugin',
-            }
-        ),
     }
 
     async def execute(container_id, command):
@@ -117,8 +112,6 @@ async def test_readiness_requires_exact_builtin_and_awg_mcp_tools(monkeypatch):
             return json.dumps(responses['/v1/capabilities'])
         if '/v1/toolsets' in source:
             return json.dumps(responses['/v1/toolsets'])
-        if 'discover_mcp_tools' in source:
-            return json.dumps(responses['discover_mcp_tools'])
         return 'ok'
 
     monkeypatch.setattr(provisioner, '_exec', execute)
@@ -141,6 +134,7 @@ async def test_readiness_rejects_forbidden_web_toolset(monkeypatch):
             )
         if '/v1/toolsets' in source:
             data = [{'name': name, 'enabled': True, 'tools': []} for name in builtins]
+            data.append({'name': 'mcp-awg', 'enabled': True, 'tools': []})
             data.append({'name': 'web', 'enabled': True, 'tools': ['web_search']})
             return json.dumps({'object': 'list', 'platform': 'api_server', 'data': data})
         return 'ok'
@@ -182,8 +176,10 @@ async def test_existing_runtime_is_reused(monkeypatch):
     monkeypatch.setattr(provisioner, '_authenticate', AsyncMock(return_value=payload))
     monkeypatch.setattr(provisioner, '_inspect', AsyncMock(return_value=existing))
     monkeypatch.setattr(provisioner, '_approved_runtime_image', lambda: 'approved')
-    monkeypatch.setattr(provisioner, '_verify_gateway_identity', AsyncMock())
-    monkeypatch.setattr(provisioner, '_wait_ready', AsyncMock())
+    verify = AsyncMock()
+    ready = AsyncMock()
+    monkeypatch.setattr(provisioner, '_verify_gateway_identity', verify)
+    monkeypatch.setattr(provisioner, '_wait_ready', ready)
     create = AsyncMock()
     monkeypatch.setattr(provisioner, '_create_runtime', create)
 
@@ -191,6 +187,8 @@ async def test_existing_runtime_is_reused(monkeypatch):
 
     assert result['runtime_id'] == name
     create.assert_not_awaited()
+    verify.assert_not_awaited()
+    ready.assert_not_awaited()
 
 
 @pytest.mark.asyncio

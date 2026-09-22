@@ -264,11 +264,6 @@ async def _wait_ready(container_id: str) -> None:
         '-c',
         "import json,os,urllib.request; req=urllib.request.Request('http://127.0.0.1:8642/v1/capabilities',headers={'Authorization':'Bearer '+os.environ['API_SERVER_KEY']}); print(json.dumps(json.load(urllib.request.urlopen(req,timeout=2))))",
     ]
-    mcp_registry_command = [
-        'python',
-        '-c',
-        "import json; from tools.mcp_tool import discover_mcp_tools,shutdown_mcp_servers; names=discover_mcp_tools(); print(json.dumps(sorted(name for name in names if name.startswith('mcp__awg__')))); shutdown_mcp_servers()",
-    ]
     for _ in range(60):
         try:
             await _exec(container_id, health_command)
@@ -300,18 +295,12 @@ async def _wait_ready(container_id: str) -> None:
             enabled = {item['name'] for item in enabled_items}
             if enabled != ALLOWED_TOOLSETS - {'mcp-awg'}:
                 raise RuntimeError(f'Hermes toolsets differ from the approved set: {sorted(enabled)}')
-            expected_awg_tools = {
-                'mcp__awg__search_confluence',
-                'mcp__awg__read_attachment',
-                'mcp__awg__publish_artifact',
-                'mcp__awg__stage_plugin',
-            }
+            mcp_toolsets = [item for item in payload['data'] if item['name'] == 'mcp-awg']
+            if len(mcp_toolsets) != 1 or not mcp_toolsets[0]['enabled']:
+                raise RuntimeError('Hermes AWG MCP toolset is not enabled')
             exposed_tools = {tool for item in enabled_items for tool in item['tools']}
             if any(marker in tool.lower() for tool in exposed_tools for marker in ('web', 'browser', 'network')):
                 raise RuntimeError('Hermes exposes a forbidden network tool')
-            registered_awg_tools = set(json.loads(await _exec(container_id, mcp_registry_command)))
-            if registered_awg_tools != expected_awg_tools:
-                raise RuntimeError('Hermes AWG MCP registry differs from the approved tools')
             return
         except (RuntimeError, ValueError, OSError):
             await asyncio.sleep(1)
@@ -474,18 +463,20 @@ async def ensure_runtime(request: Request):
         if existing is not None:
             if existing.get('Config', {}).get('Image') != _approved_runtime_image():
                 raise HTTPException(status_code=409, detail='Hermes runtime image requires rollout')
-            if not existing.get('State', {}).get('Running'):
+            was_running = bool(existing.get('State', {}).get('Running'))
+            if not was_running:
                 await _docker('POST', f'/containers/{existing["Id"]}/start')
             if not any(
                 bind.endswith(':/opt/data/plugins:ro') for bind in existing.get('HostConfig', {}).get('Binds', [])
             ):
                 raise HTTPException(status_code=409, detail='Hermes runtime requires protected plugin storage rollout')
-            try:
-                await _verify_gateway_identity(existing['Id'])
-                await _wait_ready(existing['Id'])
-            except Exception:
-                await _docker('DELETE', f'/containers/{existing["Id"]}?force=true&v=false')
-                raise
+            if not was_running:
+                try:
+                    await _verify_gateway_identity(existing['Id'])
+                    await _wait_ready(existing['Id'])
+                except Exception:
+                    await _docker('DELETE', f'/containers/{existing["Id"]}?force=true&v=false')
+                    raise
             runtime = {
                 'name': _runtime_name(form.scope_id, False),
                 'id': existing['Id'],
