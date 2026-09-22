@@ -1445,8 +1445,9 @@ async def test_screenshot_project_overview_inlet_builds_redacted_literal_fallbac
         ('Север', source),
         ('Мобильное приложение', source),
     )
-    assert state.sources == ({'id': 'S1', 'page_id': '123', 'title': 'Обзор', 'url': source['url']},)
-    assert all('text' not in item and 'relevant_excerpt' not in item for item in state.sources)
+    assert state.sources == (
+        {'id': 'S1', 'page_id': '123', 'title': 'Обзор', 'url': source['url'], 'text': source['text']},
+    )
 
 
 def test_literal_fallback_renders_project_scoped_person_role_status_and_document_facts():
@@ -1883,7 +1884,7 @@ def test_project_fallback_rejects_entire_table_for_injection_in_normalized_targe
 
 
 @pytest.mark.asyncio
-async def test_markdown_table_fallback_state_contains_no_source_text(monkeypatch):
+async def test_markdown_table_fallback_state_retains_source_text_for_hermes(monkeypatch):
     instance = Filter()
     source = project_source('| Проект | Статус |\n| --- | --- |\n| Север | Активен |')
     instance._grounded_sources = AsyncMock(return_value=([source], False, None))
@@ -1893,7 +1894,8 @@ async def test_markdown_table_fallback_state_contains_no_source_text(monkeypatch
 
     state = next(iter(getattr(request.state, STATE_KEY).states.values()))
     assert state.grounded_fallback == expected_project_fallback(('Север', source))
-    assert all('text' not in item and 'relevant_excerpt' not in item for item in state.sources)
+    assert state.sources[0]['text'] == source['text']
+    assert 'relevant_excerpt' not in state.sources[0]
 
 
 @pytest.mark.asyncio
@@ -1986,8 +1988,9 @@ async def test_project_lookup_hydration_builds_fallback_without_source_text_in_s
         ('Север', hydrated),
         ('Мобильное приложение', hydrated),
     )
-    assert state.sources == ({'id': 'S1', 'page_id': '123', 'title': 'Обзор', 'url': hydrated['url']},)
-    assert all('text' not in source and 'relevant_excerpt' not in source for source in state.sources)
+    assert state.sources == (
+        {'id': 'S1', 'page_id': '123', 'title': 'Обзор', 'url': hydrated['url'], 'text': hydrated['text']},
+    )
 
 
 @pytest.mark.parametrize('provider_answer', [UNKNOWN, CITATION_FAILURE])
