@@ -241,7 +241,29 @@ class HermesClient:
                 elif event_name in {'run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'}:
                     return
 
-    def _instructions(self, awg_state, authorized_files: list[dict[str, str]], persistent_memory: bool) -> str:
+    @staticmethod
+    def _preflight_sources(form_data: dict) -> list[dict[str, Any]]:
+        for message in reversed(form_data.get('messages', [])):
+            if message.get('role') != 'system':
+                continue
+            content = get_content_from_message(message)
+            if not isinstance(content, str):
+                continue
+            start = content.rfind('SOURCE_DATA_JSON:\n')
+            end = content.find('\nSOURCE_DATA_JSON_END', start)
+            if start < 0 or end < 0:
+                continue
+            try:
+                sources = JSONCodec.loads(content[start + len('SOURCE_DATA_JSON:\n') : end])
+            except ValueError:
+                continue
+            if isinstance(sources, list) and all(isinstance(source, dict) for source in sources):
+                return sources[:8]
+        return []
+
+    def _instructions(
+        self, awg_state, authorized_files: list[dict[str, str]], persistent_memory: bool, preflight_sources=None
+    ) -> str:
         evidence = [
             {
                 'id': source.get('id'),
@@ -251,7 +273,7 @@ class HermesClient:
                 'version': source.get('version'),
                 'content': (source.get('text') or source.get('content') or '')[:8000],
             }
-            for source in (awg_state.sources if awg_state else ())
+            for source in (preflight_sources or (awg_state.sources if awg_state else ()))
         ]
         structured = (
             ' Return only JSON with exactly these fields: '
@@ -328,7 +350,9 @@ class HermesClient:
         payload = {
             'input': latest,
             'session_id': headers['X-Hermes-Session-Id'],
-            'instructions': self._instructions(awg_state, authorized_files, persistent_memory),
+            'instructions': self._instructions(
+                awg_state, authorized_files, persistent_memory, self._preflight_sources(form_data)
+            ),
             'conversation_history': form_data.get('messages', []),
         }
         timeout = aiohttp.ClientTimeout(total=HERMES_REQUEST_TIMEOUT)
