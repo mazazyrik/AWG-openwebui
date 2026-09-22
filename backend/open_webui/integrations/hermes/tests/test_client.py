@@ -102,6 +102,19 @@ def test_preflight_sources_are_read_only_from_system_policy():
     assert sources == [{'id': 'S1', 'text': 'Verified project fact.'}]
 
 
+def test_grounded_input_embeds_evidence_with_citation_contract():
+    state = SimpleNamespace(route='confluence_grounded')
+
+    prompt = HermesClient._grounded_input(
+        'Расскажи о проекте',
+        state,
+        [{'id': 'S1', 'url': 'https://conf.awg.ru/pages/1', 'text': 'Verified project fact.'}],
+    )
+
+    assert 'Verified project fact.' in prompt
+    assert '`[S<number>] <matching source URL>`' in prompt
+
+
 @pytest.mark.asyncio
 async def test_same_user_lease_serializes_and_release_is_owner_checked(monkeypatch):
     redis = RedisStub()
