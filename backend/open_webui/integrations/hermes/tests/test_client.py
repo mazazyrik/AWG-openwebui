@@ -115,6 +115,20 @@ def test_grounded_input_embeds_evidence_with_citation_contract():
     assert '`[S<number>] <matching source URL>`' in prompt
 
 
+def test_conversation_history_excludes_internal_source_payloads():
+    history = HermesClient._conversation_history(
+        {
+            'messages': [
+                {'role': 'user', 'content': 'Вопрос'},
+                {'role': 'system', 'content': 'SOURCE_DATA_JSON:\n[]\nSOURCE_DATA_JSON_END'},
+                {'role': 'assistant', 'content': 'Ответ'},
+            ]
+        }
+    )
+
+    assert [message['role'] for message in history] == ['user', 'assistant']
+
+
 @pytest.mark.asyncio
 async def test_same_user_lease_serializes_and_release_is_owner_checked(monkeypatch):
     redis = RedisStub()
