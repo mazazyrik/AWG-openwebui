@@ -1395,7 +1395,7 @@ class Filter:
         provenance = tuple(
             {
                 key: source[key]
-                for key in ('id', 'page_id', 'title', 'url', 'version', 'hash', 'space')
+                for key in ('id', 'page_id', 'title', 'url', 'version', 'hash', 'space', 'text')
                 if source.get(key) is not None
             }
             for source in (sources or [])
