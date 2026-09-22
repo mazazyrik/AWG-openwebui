@@ -262,6 +262,16 @@ class HermesClient:
         return []
 
     @staticmethod
+    def _conversation_history(form_data: dict) -> list[dict]:
+        history = []
+        for message in form_data.get('messages', []):
+            content = get_content_from_message(message)
+            if message.get('role') == 'system' and isinstance(content, str) and 'SOURCE_DATA_JSON:' in content:
+                continue
+            history.append(message)
+        return history
+
+    @staticmethod
     def _grounded_input(question: str, awg_state, sources: list[dict[str, Any]]) -> str:
         if not awg_state or awg_state.route == 'general_work' or not sources:
             return question
@@ -294,7 +304,9 @@ class HermesClient:
                 'version': source.get('version'),
                 'content': (source.get('text') or source.get('content') or '')[:8000],
             }
-            for source in (preflight_sources or (awg_state.sources if awg_state else ()))
+            for source in (
+                preflight_sources if preflight_sources is not None else (awg_state.sources if awg_state else ())
+            )
         ]
         structured = (
             ' Return only JSON with exactly these fields: '
@@ -373,7 +385,7 @@ class HermesClient:
             'input': self._grounded_input(latest, awg_state, preflight_sources),
             'session_id': headers['X-Hermes-Session-Id'],
             'instructions': self._instructions(awg_state, authorized_files, persistent_memory, preflight_sources),
-            'conversation_history': form_data.get('messages', []),
+            'conversation_history': self._conversation_history(form_data),
         }
         timeout = aiohttp.ClientTimeout(total=HERMES_REQUEST_TIMEOUT)
         try:
