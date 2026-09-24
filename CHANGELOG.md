@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-09-24
+
+### Added
+
+- Cached raw MCP tool schemas in Redis while checking access and building request authentication on every call; dynamic or user-dependent connections bypass the cache, and connection updates invalidate cached schemas.
+- Added a Bonsai master prompt for the AWG GPT profile, with grounded use of Confluence MCP when available.
+- Added AWG chat suggestions.
+
 ## [0.11.5] - 2026-09-17
 
 ### Fixed

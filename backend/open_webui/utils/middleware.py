@@ -102,6 +102,7 @@ from open_webui.utils.filter import (
 )
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.mcp.client import MCPClient
+from open_webui.utils.mcp.tool_cache import get_mcp_tool_specs, mcp_tool_cache_label
 from open_webui.utils.memory import add_memory_context, review_memory_after_turn
 from open_webui.utils.misc import (
     add_or_update_system_message,
@@ -2384,16 +2385,48 @@ async def connect_mcp_server(
     )
 
     client = MCPClient()
-    await client.connect(
-        url=mcp_server_connection.get('url', ''),
-        headers=headers if headers else None,
-    )
+    connection_label = mcp_tool_cache_label(server_id)
+    started_at = time.perf_counter()
+    connect_succeeded = False
+    try:
+        await client.connect(
+            url=mcp_server_connection.get('url', ''),
+            headers=headers if headers else None,
+        )
+        connect_succeeded = True
+    finally:
+        log.info(
+            'MCP connect/initialize completed (connection=%s, outcome=%s, duration_ms=%.2f)',
+            connection_label,
+            'success' if connect_succeeded else 'error',
+            (time.perf_counter() - started_at) * 1000,
+        )
 
     function_name_filter_list = mcp_server_connection.get('config', {}).get('function_name_filter_list', '')
     if isinstance(function_name_filter_list, str):
         function_name_filter_list = function_name_filter_list.split(',')
 
-    tool_specs = await client.list_tool_specs()
+    async def list_tool_specs():
+        started_at = time.perf_counter()
+        succeeded = False
+        try:
+            specs = await client.list_tool_specs()
+            succeeded = True
+            return specs
+        finally:
+            log.info(
+                'MCP tools/list completed (connection=%s, outcome=%s, duration_ms=%.2f)',
+                connection_label,
+                'success' if succeeded else 'error',
+                (time.perf_counter() - started_at) * 1000,
+            )
+
+    tool_specs, cache_hit = await get_mcp_tool_specs(
+        getattr(request.app.state, 'redis', None),
+        mcp_server_connection,
+        list_tool_specs,
+    )
+    log.info('MCP tool specs resolved (connection=%s, cache_hit=%s)', connection_label, cache_hit)
     if function_name_filter_list:
         tool_specs = [spec for spec in tool_specs if is_string_allowed(spec['name'], function_name_filter_list)]
 

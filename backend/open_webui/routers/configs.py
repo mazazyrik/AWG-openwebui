@@ -14,6 +14,7 @@ from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import bearer_auth_header, get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
+from open_webui.utils.mcp.tool_cache import invalidate_mcp_tool_specs_cache
 from open_webui.utils.oauth import (
     OAuthClientInformationFull,
     apply_connection_oauth_options,
@@ -98,7 +99,20 @@ class ImportConfigForm(BaseModel):
 
 @router.post('/import', response_model=dict)
 async def import_config(request: Request, form_data: ImportConfigForm, user=Depends(get_admin_user)):
+    imported_tool_connections = form_data.config.get('tool_server.connections')
+    existing_tool_connections = []
+    if isinstance(imported_tool_connections, list):
+        existing = await Config.get('tool_server.connections', []) or []
+        if isinstance(existing, list):
+            existing_tool_connections = existing
+
     await Config.upsert(form_data.config)
+    if isinstance(imported_tool_connections, list):
+        await invalidate_mcp_tool_specs_cache(
+            getattr(request.app.state, 'redis', None),
+            existing_tool_connections + imported_tool_connections,
+        )
+
     await publish_event(
         request,
         EVENTS.CONFIG_IMPORTED,
@@ -259,6 +273,10 @@ async def set_tool_servers_config(
     # Set new tool server connections
     connections = [connection.model_dump() for connection in form_data.TOOL_SERVER_CONNECTIONS]
     await Config.upsert({'tool_server.connections': connections})
+    await invalidate_mcp_tool_specs_cache(
+        getattr(request.app.state, 'redis', None),
+        existing_connections + connections,
+    )
 
     await set_tool_servers(request)
 
