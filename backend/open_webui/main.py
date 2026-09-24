@@ -296,6 +296,7 @@ from open_webui.utils.tool_approval import (
     build_tool_approval_resume_payload,
     resolve_tool_call_output,
 )
+from open_webui.utils.tool_call_limits import _resolve_profile_max_tool_call_iterations
 from open_webui.utils.tools import set_terminal_servers, set_tool_servers
 
 if SAFE_MODE:
@@ -1182,6 +1183,12 @@ async def chat_completion(
             default_model_params,
             model_info.params.model_dump() if model_info and model_info.params else {},
         )
+        profile_tool_call_iterations = _resolve_profile_max_tool_call_iterations(
+            model_info_params.get('max_tool_call_iterations'),
+            has_explicit_override=hasattr(request.state, 'max_tool_call_iterations'),
+        )
+        if profile_tool_call_iterations is not None:
+            request.state.max_tool_call_iterations = profile_tool_call_iterations
         request_params = {key: value for key, value in (form_data.get('params') or {}).items() if value is not None}
         if model_info_params or request_params:
             form_data['params'] = merge_model_params(model_info_params, request_params)

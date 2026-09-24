@@ -1,7 +1,7 @@
 {
 	"name": "awg-gpt",
 	"description": "AWG GPT — AWG corporate AI workspace.",
-	"version": "0.11.6",
+	"version": "0.11.7",
 	"private": true,
 	"scripts": {
 		"dev": "npm run pyodide:fetch && vite dev --host",
