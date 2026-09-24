@@ -1672,31 +1672,28 @@ except Exception as e:
 if default_prompt_suggestions == []:
     default_prompt_suggestions = [
         {
-            'title': ['Help me study', 'vocabulary for a college entrance exam'],
-            'content': "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
+            'title': ['Проверь статус проекта', 'по материалам Confluence'],
+            'content': 'Проверь актуальный статус проекта AWG по Confluence: что сделано, что в работе, блокеры и риски. Укажи дату источника, его метку и каноническую ссылку рядом с фактами.',
         },
         {
-            'title': ['Give me ideas', "for what to do with my kids' art"],
-            'content': "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
+            'title': ['Найди команду проекта', 'и зоны ответственности'],
+            'content': 'Найди в Confluence подтверждённые роли и зоны ответственности участников проекта AWG. Приведи источники и канонические ссылки; не делай выводов о полном составе компании.',
         },
         {
-            'title': ['Tell me a fun fact', 'about the Roman Empire'],
-            'content': 'Tell me a random fun fact about the Roman Empire',
+            'title': ['Найди рабочий регламент', 'и ключевые шаги процесса'],
+            'content': 'Найди актуальный регламент рабочего процесса AWG в Confluence. Кратко перечисли шаги, ответственных и входы/выходы, укажи дату, метки источников и канонические ссылки.',
         },
         {
-            'title': ['Show me a code snippet', "of a website's sticky header"],
-            'content': "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
+            'title': ['Кратко перескажи документ', 'и отметь пробелы в данных'],
+            'content': 'Кратко перескажи документ AWG из Confluence: выдели подтверждённые факты и отдельно укажи, чего источник не подтверждает. Добавь метку и каноническую ссылку к каждому факту.',
         },
         {
-            'title': [
-                'Explain options trading',
-                "if I'm familiar with buying and selling stocks",
-            ],
-            'content': "Explain options trading in simple terms if I'm familiar with buying and selling stocks.",
+            'title': ['Проверь проект «Кратно Servity»', 'по канонической странице'],
+            'content': 'Проверь по канонической странице Confluence актуальные сведения о проекте «Кратно Servity». Кратко изложи подтверждённый статус и ограничения источника, укажи метку и каноническую ссылку рядом с фактами.',
         },
         {
-            'title': ['Overcome procrastination', 'give me tips'],
-            'content': 'Could you start by asking me about instances when I procrastinate the most and then give me some suggestions to overcome it?',
+            'title': ['Найди подтверждённые связи', 'между KIT, Mindbox и YANDEX'],
+            'content': 'Найди в Confluence подтверждённые сведения о связях KIT, Mindbox и YANDEX в проектах AWG. Не предполагай, что такая связь есть: укажи только факты с метками источников и каноническими ссылками.',
         },
     ]
 
